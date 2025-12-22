@@ -1,0 +1,103 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "name": {
+      "value": "audio-book-2"
+    },
+    "location": {
+      "value": "westus2"
+    },
+    "resourceGroupId": {
+      "value": "/subscriptions/<SUBSCRIPTION_ID>/resourceGroups/TTS"
+    },
+    "resourceGroupName": {
+      "value": "TTS"
+    },
+    "sku": {
+      "value": "F0"
+    },
+    "tagValues": {
+      "value": {}
+    },
+    "virtualNetworkType": {
+      "value": "None"
+    },
+    "vnet": {
+      "value": {}
+    },
+    "ipRules": {
+      "value": []
+    },
+    "identity": {
+      "value": {
+        "type": "None"
+      }
+    },
+    "privateEndpoints": {
+      "value": []
+    },
+    "privateDnsZone": {
+      "value": "[$item.privateDnsZoneConfiguration.integrateWithPrivateDnsZone]"
+    },
+    "isCommitmentPlanForDisconnectedContainerEnabledForSTT": {
+      "value": false
+    },
+    "commitmentPlanForDisconnectedContainerForSTT": {
+      "value": {
+        "current": {
+          "tier": "no_commitment",
+          "count": 0
+        },
+        "hostingModel": "DisconnectedContainer",
+        "planType": "STT",
+        "autoRenew": true
+      }
+    },
+    "isCommitmentPlanForDisconnectedContainerEnabledForNeuralTTS": {
+      "value": false
+    },
+    "commitmentPlanForDisconnectedContainerForNeuralTTS": {
+      "value": {
+        "current": {
+          "tier": "no_commitment",
+          "count": 0
+        },
+        "hostingModel": "DisconnectedContainer",
+        "planType": "NTTS",
+        "autoRenew": true
+      }
+    },
+    "isCommitmentPlanForDisconnectedContainerEnabledForCustomSTT": {
+      "value": false
+    },
+    "commitmentPlanForDisconnectedContainerForCustomSTT": {
+      "value": {
+        "current": {
+          "tier": "no_commitment",
+          "count": 0
+        },
+        "hostingModel": "DisconnectedContainer",
+        "planType": "CustomSTT",
+        "autoRenew": true
+      }
+    },
+    "isCommitmentPlanForDisconnectedContainerEnabledForAddOn": {
+      "value": false
+    },
+    "commitmentPlanForDisconnectedContainerForAddOn": {
+      "value": {
+        "current": {
+          "tier": "no_commitment",
+          "count": 0
+        },
+        "hostingModel": "DisconnectedContainer",
+        "planType": "AddOn",
+        "autoRenew": true
+      }
+    },
+    "uniqueId": {
+      "value": "32301003-cc53-43df-b721-016eeac58750"
+    }
+  }
+}
