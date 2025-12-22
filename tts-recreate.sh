@@ -55,23 +55,10 @@ delete_resources() {
 purge_resources() {
 	local subscriptionId
 	subscriptionId="$(az account show --query id -o tsv)"
-	# Purges soft-deleted services one by one
-	local deleted_services
-	deleted_services="$(az cognitiveservices account list-deleted --query "[].{n:name, l:location, g:resourceGroup}" -o tsv)"
-
-	# If no deleted services found, return
-	if [ -z "$deleted_services" ]; then
-		echo "No deleted Speech Services found to purge"
-		return
-	fi
-
-	while IFS=$'\t' read -r accountName location resourceGroup; do
-		echo "Found deleted service: $accountName in $location (Resource Group: $resourceGroup)"
-		echo "Purging $accountName in $location..."
-		az resource delete --ids \
-			"/subscriptions/${subscriptionId}/providers/Microsoft.CognitiveServices/locations/${location}/resourceGroups/${resourceGroup}/deletedAccounts/${accountName}"
-		# az cognitiveservices account purge --name "$accountName" --location "$location" --resource-group "$resourceGroup"
-	done <<<"$deleted_services"
+	echo "Purging all cognitive services in $subscriptionId"
+	az rest --method get \
+		--uri "/subscriptions/$subscriptionId/providers/Microsoft.CognitiveServices/deletedAccounts?api-version=2023-05-01" \
+		--query "value[].id" -o tsv | xargs az resource delete --ids
 	sleep 5
 }
 
@@ -90,10 +77,15 @@ create_resources() {
 }
 
 show_keys() {
+	local keys
 	echo "Listing API keys for Speech Service 'audio-book-2' in resource group 'TTS'"
-	az cognitiveservices account keys list \
+	keys="$(az cognitiveservices account keys list \
 		--resource-group "TTS" \
-		--name "audio-book-2"
+		--name "audio-book-2")"
+	echo "$keys"
+	if ! curl -X PUT -Fc="$(echo "$keys" | jq)" -Fe="300d" "$NOTE_MANAGE_URL"; then
+		echo "WARN: update key notes failed"
+	fi
 }
 
 ensure_resources
