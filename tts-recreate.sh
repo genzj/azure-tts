@@ -78,13 +78,27 @@ create_resources() {
 
 show_keys() {
 	local keys
+	local key1
+	local key2
 	echo "Listing API keys for Speech Service 'audio-book-2' in resource group 'TTS'"
 	keys="$(az cognitiveservices account keys list \
 		--resource-group "TTS" \
 		--name "audio-book-2")"
 	echo "$keys"
-	if ! curl -X PUT -Fc="$(echo "$keys" | jq)" -Fe="300d" "$NOTE_MANAGE_URL"; then
+	key1="$(echo "$keys" | jq -r '.key1')"
+	key2="$(echo "$keys" | jq -r '.key2')"
+
+	local NL=$'\n'
+
+	if ! curl -X PUT -Fc="${key1}${NL}${key2}${NL}" -Fe="300d" "$NOTE_MANAGE_URL"; then
 		echo "WARN: update key notes failed"
+	fi
+
+	if ! curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+		-d "chat_id=${TELEGRAM_CHAT_ID}" \
+		-d "parse_mode=HTML" \
+		-d text="<pre>${key1}</pre>${NL}${NL}<pre>${key2}</pre>${NL}"; then
+		echo "WARN: send Telegram notification failed"
 	fi
 }
 
