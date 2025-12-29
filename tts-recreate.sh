@@ -90,15 +90,19 @@ show_keys() {
 
 	local NL=$'\n'
 
-	if ! curl -X PUT -Fc="${key1}${NL}${key2}${NL}" -Fe="300d" "$NOTE_MANAGE_URL"; then
-		echo "WARN: update key notes failed"
+	if [[ -n $NOTE_MANAGE_URL ]]; then
+		if ! curl -X PUT -Fc="${key1}${NL}${key2}${NL}" -Fe="300d" "$NOTE_MANAGE_URL"; then
+			echo "WARN: update key notes failed"
+		fi
 	fi
 
-	if ! curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-		-d "chat_id=${TELEGRAM_CHAT_ID}" \
-		-d "parse_mode=HTML" \
-		-d text="<pre>${key1}</pre>${NL}${NL}<pre>${key2}</pre>${NL}"; then
-		echo "WARN: send Telegram notification failed"
+	if [[ -n $TELEGRAM_BOT_TOKEN && -n $TELEGRAM_CHAT_ID ]]; then
+		if ! curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
+			-d "chat_id=${TELEGRAM_CHAT_ID}" \
+			-d "parse_mode=HTML" \
+			-d text="<pre>${key1}</pre>${NL}${NL}<pre>${key2}</pre>${NL}"; then
+			echo "WARN: send Telegram notification failed"
+		fi
 	fi
 }
 
