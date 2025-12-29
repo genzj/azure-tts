@@ -1,8 +1,5 @@
 #!/bin/bash
 
-# shellcheck source=.env
-source .env
-
 if ! az login \
 	--service-principal \
 	--username "$AZURE_APPID" \
@@ -70,10 +67,16 @@ create_resources() {
 		--version "v1" \
 		--query "id" -o tsv)
 	echo "Deploying template 'audio-book-tts' ($tsId) with parameters from deployment-input.json"
+	local inputfile
+	if [[ -f "/input/deployment-input.json" ]]; then
+		inputfile="/input/deployment-input.json"
+	else
+		inputfile="deployment-input.json"
+	fi
 	az deployment group create \
 		--resource-group "TTS" \
 		--template-spec "${tsId}" \
-		--parameters @deployment-input.json
+		--parameters "@${inputfile}"
 }
 
 show_keys() {

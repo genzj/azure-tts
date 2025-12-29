@@ -1,0 +1,8 @@
+services:
+  azure-tts:
+    image: azure-tts:latest
+    env_file:
+      - .env
+    volumes:
+      - .:/input
+    restart: "no"

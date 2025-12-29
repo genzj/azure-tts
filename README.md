@@ -64,6 +64,24 @@ Run the complete recreation process:
 ./tts-recreate.sh
 ```
 
+### Running in Docker
+
+Create .env and deployment-input.json as mentioned above. Run:
+
+```sh
+# Build the Docker image
+docker build -t azure-tts .
+
+# Run the container
+docker run --rm --env-file .env --volume '.:/input' azure-tts:latest
+```
+
+Or, run it with docker compose
+
+```sh
+docker compose up --build
+```
+
 ## Error Codes
 
 | Code | Description                         |

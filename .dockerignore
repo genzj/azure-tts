@@ -1,0 +1,14 @@
+*.log
+*.sample
+.DS_Store
+.dockerignore
+.env
+.git
+.gitignore
+.shellcheckrc
+.vscode
+Dockerfile
+README.md
+Thumbs.db
+data/
+mise.toml
