@@ -1,6 +1,6 @@
 services:
   azure-tts:
-    image: azure-tts:latest
+    image: ghcr.io/genzj/azure-tts:latest
     env_file:
       - .env
     volumes:

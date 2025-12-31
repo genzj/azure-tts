@@ -96,6 +96,8 @@ show_keys() {
 	if [[ -n $NOTE_MANAGE_URL ]]; then
 		if ! curl -X PUT -Fc="${key1}${NL}${key2}${NL}" -Fe="300d" "$NOTE_MANAGE_URL"; then
 			echo "WARN: update key notes failed"
+		else
+			echo ""
 		fi
 	fi
 
@@ -105,6 +107,8 @@ show_keys() {
 			-d "parse_mode=HTML" \
 			-d text="<pre>${key1}</pre>${NL}${NL}<pre>${key2}</pre>${NL}"; then
 			echo "WARN: send Telegram notification failed"
+		else
+			echo ""
 		fi
 	fi
 }

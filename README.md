@@ -18,7 +18,9 @@ Azure's free TTS service has usage quotas that, once exceeded, prevent further t
 - Resource group "TTS" in your Azure subscription
 - Template spec "data/audio-book-tts.json" uploaded in the resource group
 
-### Required Azure Service Principal
+## Usage
+
+### Create an Azure Service Principal
 
 Your service principal needs the following permissions:
 
@@ -29,32 +31,11 @@ Your service principal needs the following permissions:
   - `Template Spec Reader` role for deployment operations
   - `Resource Group Reader` role for validation
 
-## Installation
+### Setup
 
-1. Clone this repository:
+Download the [.env.sample](.env.sample) and rename it to `.env`. Configure your credentials in `.env`.
 
-```bash
-git clone https://github.com/genzj/azure-tts.git
-cd azure-tts
-```
-
-2. Copy the environment template:
-
-```bash
-cp .env.sample .env
-```
-
-3. Configure your Azure credentials in `.env`:
-
-4. Create your deployment parameters:
-
-```bash
-cp ./data/deployment-input-sample.json deployment-input.json
-```
-
-5. Edit `deployment-input.json` with your specific parameters.
-
-## Usage
+Download the [deployment-input-sample.json](data/deployment-input-sample.json) and rename it to `deployment-input.json`. Replace `<SUBSCRIPTION_ID>` in it with your Azure subscription id.
 
 ### Basic Usage
 
@@ -66,20 +47,16 @@ Run the complete recreation process:
 
 ### Running in Docker
 
-Create .env and deployment-input.json as mentioned above. Run:
+Download the [docker-compose.yml](docker-compose.yml).
 
 ```sh
-# Build the Docker image
-docker build -t azure-tts .
-
-# Run the container
-docker run --rm --env-file .env --volume '.:/input' azure-tts:latest
+docker run --rm --env-file .env --volume '.:/input' ghcr.io/genzj/azure-tts:latest
 ```
 
 Or, run it with docker compose
 
 ```sh
-docker compose up --build
+docker compose up
 ```
 
 ## Error Codes
@@ -89,6 +66,46 @@ docker compose up --build
 | 1    | Azure login failed                  |
 | 2    | Resource group "TTS" not found      |
 | 3    | Template "audio-book-tts" not found |
+
+## Development
+
+1. Install [mise](https://mise.jdx.dev/getting-started.html)
+1. Clone this repository:
+
+```bash
+git clone https://github.com/genzj/azure-tts.git
+cd azure-tts
+```
+
+1. Install toolchain
+
+```bash
+mise trust
+mise install
+ggshield install -m local -t pre-commit
+ggshield auth login
+```
+
+1. Copy the environment template:
+
+```bash
+cp .env.sample .env
+```
+
+1. Configure your Azure credentials in `.env`.
+
+1. Create your deployment parameters:
+
+```bash
+cp ./data/deployment-input-sample.json deployment-input.json
+```
+
+1. Edit `deployment-input.json` with your specific parameters. Replace `<SUBSCRIPTION_ID>` in it with your Azure subscription id.
+1. Build in docker:
+
+```bash
+docker build -t azure-tts:latest .
+```
 
 ## Troubleshooting
 

@@ -1,2 +1,7 @@
 [env]
 _.file = '.env'
+
+[tools]
+pipx = "latest"
+"pipx:ggshield" = "latest"
+python = "3"
