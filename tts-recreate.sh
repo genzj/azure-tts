@@ -1,5 +1,17 @@
 #!/bin/bash
 
+if [[ $TTS_DEBUG -gt 0 ]]; then
+	env | sort
+fi
+
+if [[ $TTS_DEBUG -gt 1 ]]; then
+	set -x
+fi
+
+if [[ $TTS_DEBUG -gt 2 ]]; then
+	exit 0
+fi
+
 if ! az login \
 	--service-principal \
 	--username "$AZURE_APPID" \
