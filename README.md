@@ -270,6 +270,57 @@ Set `TTS_DEBUG` in `.env` to control debug output:
 
 This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
 
+## TODO
+
+### Separate recreator and proxy into independent services
+
+Currently the recreation script and the Caddy proxy run sequentially in a single container — the proxy is unavailable during recreation and cannot scale independently.
+
+- Split into two containers: a short-lived recreator job and a long-running proxy service.
+- After recreating the Azure resource, the recreator pushes the new key to Caddy via its [admin API](https://caddyserver.com/docs/api) (`POST /load`) instead of writing a static config file.
+- Enable the Caddy admin API listener (currently unused) and secure it for internal-only access.
+- Allow horizontal scaling of the proxy behind a load balancer while a single recreator instance manages the lifecycle.
+- Achieve zero-downtime credential rotation — clients experience no interruption during recreation.
+
+### Self-provisioning of Azure resources
+
+The script currently assumes the resource group `TTS` and the template spec `audio-book-tts` already exist, requiring manual setup.
+
+- Auto-create the `TTS` resource group if it does not exist.
+- Upload `data/audio-book-tts.json` as a template spec when missing or outdated.
+- Reduce prerequisites to just an Azure service principal and a subscription ID.
+
+### Make the Azure region configurable
+
+The upstream Azure TTS endpoint (`westus2.tts.speech.microsoft.com`) is hardcoded in `Caddyfile.template`.
+
+- Derive the region from `deployment-input.json` or an environment variable and inject it into the Caddy config at startup.
+
+### Health check endpoint
+
+There is no way for orchestrators or load balancers to verify the proxy is healthy.
+
+- Add a `/healthz` route in the Caddyfile that returns `200 OK` without authentication.
+- Configure a Docker `HEALTHCHECK` instruction in the Dockerfile.
+
+### Improve error handling in the recreation script
+
+- Add `set -euo pipefail` for stricter failure detection.
+- Validate that `show_keys` actually received valid keys before writing the Caddy config (currently proceeds silently on failure).
+- Add retry logic for transient Azure API errors during delete/purge/create.
+
+### Configurable audio output format
+
+`X-Microsoft-OutputFormat` is hardcoded to `audio-16khz-32kbitrate-mono-mp3` in the Caddyfile template.
+
+- Allow clients to pass their desired output format via a request header and forward it to Azure, falling back to the current default.
+
+### Production docker-compose with port mapping and restart policy
+
+The shipped `docker-compose.yml` has the port mapping commented out and uses `restart: "no"`.
+
+- Provide a production-ready compose example with port exposure, a restart policy (e.g. `unless-stopped`), and optional scheduling (cron or external trigger) for periodic recreation.
+
 ## Acknowledgments
 
 - [Caddy](https://caddyserver.com/) for the lightweight, config-driven reverse proxy
