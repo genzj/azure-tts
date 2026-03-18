@@ -1,133 +1,262 @@
-# Azure TTS Service Recreation Service
+# Azure TTS Proxy & Service Recreation
 
-Automates the recreation of Azure Text-to-Speech (TTS) services to bypass free tier quota limitations.
+Automates the recreation of Azure Text-to-Speech (TTS) free-tier services to bypass monthly quota limitations, and provides a reverse proxy so that clients never need to update their credentials after each recreation cycle.
 
 ## Overview
 
-Azure's free TTS service has usage quotas that, once exceeded, prevent further text-to-speech operations. This script automates the process of:
+Azure's free TTS service (F0 SKU) has usage quotas that, once exceeded, prevent further text-to-speech operations. This project solves the problem by combining two components:
 
-1. Deleting existing TTS service instances
-2. Purging soft-deleted services to free up namespace
-3. Recreating fresh TTS services
-4. Retrieving API keys for the new services and publish it via a Telegarm Bot
+1. **Service Recreation** — a script that automatically deletes, purges, and recreates Azure TTS service instances, then retrieves fresh API keys.
+2. **TTS Proxy** — a [Caddy](https://caddyserver.com/)-based reverse proxy that transparently injects the latest Azure credentials into every request, so clients only need a single, stable proxy endpoint and a static access token.
+
+After each recreation cycle the proxy picks up the new key automatically. From the client's perspective, the Azure TTS API is always available with virtually no monthly quota limitation.
+
+### How It Works
+
+```
+Client --> POST /tts --> TTS Proxy (Caddy :80) --> Azure TTS API
+                          │
+                          ├─ Authenticates client via X-Proxy-Token header
+                          ├─ Injects current Azure subscription key
+                          └─ Forwards SSML payload to Azure
+```
+
+1. The recreation script (`tts-recreate.sh`) logs in with an Azure service principal, tears down the old TTS resource, purges it, deploys a fresh one from an ARM template spec, and writes the new key into the Caddy configuration.
+2. Caddy starts immediately after and serves as the proxy until the container is restarted for the next recreation cycle.
+3. Clients authenticate with a static `X-Proxy-Token` header and POST SSML to `/tts`. The proxy handles all Azure-specific headers and credential injection.
 
 ## Prerequisites
 
-- Azure CLI installed and configured
-- Azure service principal with appropriate permissions (see next section)
-- Resource group "TTS" in your Azure subscription
-- Template spec "data/audio-book-tts.json" uploaded in the resource group
+- Azure CLI installed and configured (included in the Docker image)
+- Azure service principal with appropriate permissions (see [Create an Azure Service Principal](#create-an-azure-service-principal))
+- Resource group `TTS` in your Azure subscription
+- Template spec `audio-book-tts` (from `data/audio-book-tts.json`) uploaded to the resource group
 
-## Usage
+## Quick Start (Docker)
+
+1. Download [docker-compose.yml](docker-compose.yml), [.env.sample](.env.sample), and [deployment-input-sample.json](data/deployment-input-sample.json).
+
+2. Prepare configuration files:
+
+   ```bash
+   cp .env.sample .env
+   # Edit .env with your Azure credentials and proxy token
+
+   cp deployment-input-sample.json deployment-input.json
+   # Replace <SUBSCRIPTION_ID> with your Azure subscription id
+   ```
+
+3. Run with Docker Compose:
+
+   ```bash
+   docker compose up
+   ```
+
+   Or run directly:
+
+   ```bash
+   docker run --rm --env-file .env --volume '.:/input' -p 80:80 ghcr.io/genzj/azure-tts:latest
+   ```
+
+4. Send a TTS request through the proxy:
+
+   ```bash
+   curl -X POST http://localhost/tts \
+     -H "X-Proxy-Token: <your-TTS_PROXY_ACCESS_TOKEN>" \
+     -d "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'>\
+          <voice name='en-US-JennyNeural'>Hello from the TTS proxy.</voice>\
+         </speak>" \
+     --output speech.mp3
+   ```
+
+## Configuration
+
+### Environment Variables
+
+Configure these in your `.env` file:
+
+| Variable                 | Required | Description                                                                                           |
+| ------------------------ | -------- | ----------------------------------------------------------------------------------------------------- |
+| `AZURE_APPID`            | Yes      | Service principal application ID                                                                      |
+| `AZURE_PASSWORD`         | Yes      | Service principal password / secret                                                                   |
+| `AZURE_TENANT`           | Yes      | Azure AD tenant ID                                                                                    |
+| `TTS_PROXY_ACCESS_TOKEN` | Yes      | Static token clients use to authenticate with the proxy (min 12 characters)                           |
+| `TELEGRAM_BOT_TOKEN`     | No       | Telegram bot token for key-change notifications                                                       |
+| `TELEGRAM_CHAT_ID`       | No       | Telegram chat ID for notifications                                                                    |
+| `NOTE_MANAGE_URL`        | No       | Manage URL of a [pastebin-worker](https://github.com/SharzyL/pastebin-worker) note for key publishing |
+| `TTS_DEBUG`              | No       | Debug level: 0 = off, 1 = print env, 2 = print env + trace, 3 = dry run (see [Debugging](#debugging)) |
+
+### Deployment Parameters
+
+Edit `deployment-input.json` to customise the Azure resource deployment. Key parameters:
+
+| Parameter  | Default        | Description                             |
+| ---------- | -------------- | --------------------------------------- |
+| `name`     | `audio-book-2` | Name of the Cognitive Services resource |
+| `location` | `westus2`      | Azure region                            |
+| `sku`      | `F0`           | Pricing tier (F0 = free)                |
+
+Replace `<SUBSCRIPTION_ID>` in the file with your actual Azure subscription ID.
 
 ### Create an Azure Service Principal
 
-Your service principal needs the following permissions:
-
-- Create by following https://learn.microsoft.com/en-us/cli/azure/azure-cli-sp-tutorial-1?view=azure-cli-latest&tabs=bash#create-a-service-principal-using-variables
-- Scope is the target subscription
-- With roles (TBD, if not working, use `Owner`):
-  - `Cognitive Services Contributor` role on the TTS resource group
-  - `Template Spec Reader` role for deployment operations
-  - `Resource Group Reader` role for validation
-
-### Setup
-
-Download the [.env.sample](.env.sample) and rename it to `.env`. Configure your credentials in `.env`.
-
-Download the [deployment-input-sample.json](data/deployment-input-sample.json) and rename it to `deployment-input.json`. Replace `<SUBSCRIPTION_ID>` in it with your Azure subscription id.
-
-### Basic Usage
-
-Run the complete recreation process:
+Create a service principal scoped to your subscription:
 
 ```bash
-./tts-recreate.sh
+# https://learn.microsoft.com/en-us/cli/azure/azure-cli-sp-tutorial-1
+az ad sp create-for-rbac --name "tts-recreator" --role Owner --scopes /subscriptions/<SUBSCRIPTION_ID>
 ```
 
-### Running in Docker
+Ideally, use least-privilege roles instead of `Owner`:
 
-Download the [docker-compose.yml](docker-compose.yml).
+- `Cognitive Services Contributor` on the TTS resource group
+- `Template Spec Reader` for deployment operations
+- `Resource Group Reader` for validation
 
-```sh
-docker run --rm --env-file .env --volume '.:/input' ghcr.io/genzj/azure-tts:latest
-```
+## Proxy API Reference
 
-Or, run it with docker compose
+### `POST /tts`
 
-```sh
-docker compose up
-```
+Proxies a TTS synthesis request to Azure Cognitive Services.
+
+**Headers:**
+
+| Header          | Required | Description                         |
+| --------------- | -------- | ----------------------------------- |
+| `X-Proxy-Token` | Yes      | Must match `TTS_PROXY_ACCESS_TOKEN` |
+
+**Body:** SSML payload (the proxy sets `Content-Type: application/ssml+xml` upstream).
+
+**Response:**
+
+The proxy itself may return the following:
+
+| Status                   | Condition                          |
+| ------------------------ | ---------------------------------- |
+| _(connection aborted)_   | Missing or invalid `X-Proxy-Token` |
+| `404 Not Found`          | Path is not `/tts`                 |
+| `405 Method Not Allowed` | Non-POST method on `/tts`          |
+
+When the request passes proxy validation, it is forwarded to Azure TTS. The Azure response (status codes, headers, and body — typically an `audio-16khz-32kbitrate-mono-mp3` audio stream) is returned to the client transparently.
+
+## Client Migration Guide
+
+If you were previously calling the Azure TTS API directly:
+
+1. Replace the Azure endpoint (`https://<region>.tts.speech.microsoft.com/cognitiveservices/v1`) with your proxy URL (`http://<proxy-host>/tts`).
+2. Replace the `Ocp-Apim-Subscription-Key` header with `X-Proxy-Token: <your-TTS_PROXY_ACCESS_TOKEN>`.
+3. Remove any `Content-Type`, `X-Microsoft-OutputFormat`, and `User-Agent` headers — the proxy injects these automatically.
+4. Keep sending the same SSML body as before.
+
+That's it. No further changes are needed when credentials rotate.
 
 ## Error Codes
 
-| Code | Description                         |
-| ---- | ----------------------------------- |
-| 1    | Azure login failed                  |
-| 2    | Resource group "TTS" not found      |
-| 3    | Template "audio-book-tts" not found |
+| Code | Description                                                               |
+| ---- | ------------------------------------------------------------------------- |
+| 1    | Azure login failed, or `TTS_PROXY_ACCESS_TOKEN` is too short (< 12 chars) |
+| 2    | Resource group `TTS` not found                                            |
+| 3    | Template spec `audio-book-tts` not found                                  |
 
 ## Development
 
-1. Install [mise](https://mise.jdx.dev/getting-started.html)
-1. Clone this repository:
+### Setup
+
+1. Install [mise](https://mise.jdx.dev/getting-started.html).
+
+2. Clone the repository:
+
+   ```bash
+   git clone https://github.com/genzj/azure-tts.git
+   cd azure-tts
+   ```
+
+3. Install the toolchain:
+
+   ```bash
+   mise trust
+   mise install
+   ggshield install -m local -t pre-commit
+   ggshield auth login
+   ```
+
+4. Prepare configuration:
+
+   ```bash
+   cp .env.sample .env
+   cp data/deployment-input-sample.json deployment-input.json
+   # Edit both files with your values
+   ```
+
+5. Build and run locally:
+
+   ```bash
+   docker build -t azure-tts:latest .
+   docker compose -f docker-compose-dev.yml up
+   ```
+
+   The dev compose file maps port `9980` → `80` inside the container.
+
+### Testing the Proxy
 
 ```bash
-git clone https://github.com/genzj/azure-tts.git
-cd azure-tts
+./test.sh
+# Sends a sample SSML request to localhost:9980 and saves test_audio.mp3
 ```
 
-1. Install toolchain
+### CI/CD
 
-```bash
-mise trust
-mise install
-ggshield install -m local -t pre-commit
-ggshield auth login
-```
+The GitHub Actions workflow (`.github/workflows/publish-image.yml`) builds multi-arch images (`linux/amd64`, `linux/arm64`) on every push and PR. Pushing a version tag (e.g. `v1.0.0`) publishes the image to `ghcr.io/genzj/azure-tts` and creates a draft GitHub release.
 
-1. Copy the environment template:
+[GitGuardian](https://www.gitguardian.com/) scans run on every push and PR to detect leaked secrets.
 
-```bash
-cp .env.sample .env
-```
+## Debugging
 
-1. Configure your Azure credentials in `.env`.
+Set `TTS_DEBUG` in `.env` to control debug output:
 
-1. Create your deployment parameters:
-
-```bash
-cp ./data/deployment-input-sample.json deployment-input.json
-```
-
-1. Edit `deployment-input.json` with your specific parameters. Replace `<SUBSCRIPTION_ID>` in it with your Azure subscription id.
-1. Build in docker:
-
-```bash
-docker build -t azure-tts:latest .
-```
+| Level | Behaviour                                                                                                                                                                                                                                       |
+| ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`   | Debug disabled (default).                                                                                                                                                                                                                       |
+| `1`   | Print all environment variables (sorted), then continue normally.                                                                                                                                                                               |
+| `2`   | Print all environment variables and enable shell tracing (`set -x`) so every executed command is logged.                                                                                                                                        |
+| `3`   | Dry run — print environment variables, skip the entire recreation cycle (delete / purge / create), but still fetch keys from the existing Azure TTS service and start the proxy. Useful for testing the proxy without touching Azure resources. |
 
 ## Troubleshooting
 
-### Common Issues
-
 **Login Failures**
 
-- Verify service principal credentials in `.env`
-- Ensure service principal has not expired
-- Check tenant ID is correct
+- Verify service principal credentials in `.env`.
+- Ensure the service principal has not expired.
+- Check the tenant ID is correct.
 
 **Resource Not Found**
 
-- Confirm resource group "TTS" exists in your subscription
-- Verify template spec "audio-book-tts" is deployed
-- Check your service principal has read access
+- Confirm resource group `TTS` exists in your subscription.
+- Verify template spec `audio-book-tts` is deployed.
+- Check your service principal has read access.
 
 **Deployment Failures**
 
-- Validate `deployment-input.json` parameters
-- Ensure template spec version is accessible
-- Check resource quotas in your subscription
+- Validate `deployment-input.json` parameters.
+- Ensure template spec version `v1` is accessible.
+- Check resource quotas in your subscription.
+
+**Proxy Not Starting**
+
+- `TTS_PROXY_ACCESS_TOKEN` must be at least 12 characters. Generate one with: `openssl rand -base64 32 | tr -d '/+=' | cut -c1-32`
+- Check Caddy logs in the container output for configuration errors.
+
+**Clients Getting Connection Aborted**
+
+- Ensure the `X-Proxy-Token` header value matches `TTS_PROXY_ACCESS_TOKEN` exactly.
+
+## Security
+
+- Never commit `.env` files containing credentials.
+- Use a strong, random `TTS_PROXY_ACCESS_TOKEN` (at least 12 characters, 32+ recommended).
+- Place the proxy behind an API gateway or load balancer that terminates TLS — Caddy listens on plain HTTP by design.
+- Regularly rotate service principal secrets.
+- Follow the principle of least privilege for Azure permissions.
 
 ## Contributing
 
@@ -139,24 +268,10 @@ docker build -t azure-tts:latest .
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Security
-
-- Never commit `.env` files containing credentials
-- Use Azure Key Vault for production deployments
-- Regularly rotate service principal secrets
-- Follow principle of least privilege for permissions
-
-## Support
-
-For issues and questions:
-
-- Check the [troubleshooting section](#troubleshooting)
-- Review Azure CLI documentation
-- Open an issue in this repository
+This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
 
 ## Acknowledgments
 
+- [Caddy](https://caddyserver.com/) for the lightweight, config-driven reverse proxy
 - Azure CLI team for comprehensive tooling
 - Azure Cognitive Services documentation
