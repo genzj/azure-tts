@@ -1,10 +1,10 @@
 services:
   azure-tts:
-    image: ghcr.io/genzj/azure-tts:latest
+    build: .
     env_file:
       - .env
     volumes:
       - .:/input
     restart: "no"
-    # ports:
-    #   - 80
+    ports:
+      - "9980:80"

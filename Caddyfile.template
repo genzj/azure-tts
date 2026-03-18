@@ -1,0 +1,55 @@
+# Listen on HTTP only and API gateway should terminate the SSL
+
+:80 {
+    # Verification Matcher
+    # It checks if the 'X-Proxy-Token' header matches your secret env var
+    @authenticated header X-Proxy-Token "{$TTS_PROXY_ACCESS_TOKEN}"
+    handle @authenticated {
+
+        @post method POST
+        @not_post not method POST
+
+        handle /tts {
+            handle @post {
+                # Proxy to Azure TTS
+                reverse_proxy https://westus2.tts.speech.microsoft.com {
+                    # 1. Map the incoming path to the Azure endpoint
+                    rewrite /cognitiveservices/v1
+
+                    # 2. Security: Inject the key from the environment variable
+                    header_up Ocp-Apim-Subscription-Key "${AZURE_TTS_KEY}"
+
+                    # 3. Azure-required headers
+                    header_up Host {upstream_hostport}
+                    header_up Content-Type "application/ssml+xml"
+                    header_up X-Microsoft-OutputFormat "audio-16khz-32kbitrate-mono-mp3"
+                    header_up User-Agent "generate-tts-proxy"
+
+                    # Ensure we don't pass the original Host header from the Gateway
+                    # to Azure as Microsoft's WAF will reject it.
+                }
+            }
+
+            # Respond with 405 if not a POST request
+            handle @not_post {
+                respond "Method Not Allowed" 405
+            }
+        }
+
+        # 5. Fallback for any other path
+        handle {
+            respond "Not Found" 404
+        }
+    }
+
+    # Default response for failed authentication
+    handle {
+        abort
+    }
+
+    # Logging to stdout for Docker logs
+    log {
+        output stdout
+        format console
+    }
+}

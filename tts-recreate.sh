@@ -8,10 +8,6 @@ if [[ $TTS_DEBUG -gt 1 ]]; then
 	set -x
 fi
 
-if [[ $TTS_DEBUG -gt 2 ]]; then
-	exit 0
-fi
-
 if ! az login \
 	--service-principal \
 	--username "$AZURE_APPID" \
@@ -103,6 +99,10 @@ show_keys() {
 	key1="$(echo "$keys" | jq -r '.key1')"
 	key2="$(echo "$keys" | jq -r '.key2')"
 
+	mkdir -p /etc/caddy
+	# shellcheck disable=SC2016
+	AZURE_TTS_KEY="$key2" envsubst '${AZURE_TTS_KEY}' <./Caddyfile.template >/etc/caddy/Caddyfile
+
 	local NL=$'\n'
 
 	if [[ -n $NOTE_MANAGE_URL ]]; then
@@ -125,8 +125,33 @@ show_keys() {
 	fi
 }
 
-ensure_resources
-delete_resources
-purge_resources
-create_resources
+start_caddy() {
+	# Token Length Verification
+	TOKEN_LENGTH=${#TTS_PROXY_ACCESS_TOKEN}
+
+	if [ "$TOKEN_LENGTH" -le 11 ]; then
+		echo "----------------------------------------------------------------------"
+		echo "ERROR: TTS_PROXY_ACCESS_TOKEN is too short ($TOKEN_LENGTH chars)."
+		echo "Your token must be at least 12 characters to prevent brute-force attacks."
+		echo "Otherwise the proxy server will not be started."
+		echo ""
+		echo "To generate a secure, random 32-character token, run this command:"
+		echo "openssl rand -base64 32 | tr -d '/+=' | cut -c1-32"
+		echo "----------------------------------------------------------------------"
+		exit 1
+	fi
+
+	exec caddy "run" "--config" "/etc/caddy/Caddyfile" "--adapter" "caddyfile"
+}
+
+if [[ $TTS_DEBUG -gt 2 ]]; then
+	echo "DRY RUN mode: skip recreation."
+else
+	ensure_resources
+	delete_resources
+	purge_resources
+	create_resources
+fi
+
 show_keys
+start_caddy
