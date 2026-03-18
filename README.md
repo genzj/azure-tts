@@ -115,6 +115,15 @@ Ideally, use least-privilege roles instead of `Owner`:
 
 ## Proxy API Reference
 
+### `GET /healthz`
+
+Returns `200 OK` when the proxy is running. No authentication required. Intended for use by orchestrators (Docker, Kubernetes) and load balancers.
+
+```bash
+curl http://localhost/healthz
+# OK
+```
+
 ### `POST /tts`
 
 Proxies a TTS synthesis request to Azure Cognitive Services.
@@ -295,13 +304,6 @@ The script currently assumes the resource group `TTS` and the template spec `aud
 The upstream Azure TTS endpoint (`westus2.tts.speech.microsoft.com`) is hardcoded in `Caddyfile.template`.
 
 - Derive the region from `deployment-input.json` or an environment variable and inject it into the Caddy config at startup.
-
-### Health check endpoint
-
-There is no way for orchestrators or load balancers to verify the proxy is healthy.
-
-- Add a `/healthz` route in the Caddyfile that returns `200 OK` without authentication.
-- Configure a Docker `HEALTHCHECK` instruction in the Dockerfile.
 
 ### Improve error handling in the recreation script
 

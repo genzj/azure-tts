@@ -24,6 +24,9 @@ RUN if [ "$TARGETARCH" = "amd64" ]; then \
 
 EXPOSE 80
 
+HEALTHCHECK --interval=30s --timeout=5s --start-period=300s --retries=3 \
+    CMD curl -f http://localhost/healthz || exit 1
+
 # 4. Set the working directory and copy all .sh files
 WORKDIR /app
 COPY *.sh ./

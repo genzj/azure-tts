@@ -1,6 +1,11 @@
 # Listen on HTTP only and API gateway should terminate the SSL
 
 :80 {
+    # Health check endpoint — no authentication required
+    handle /healthz {
+        respond "OK" 200
+    }
+
     # Verification Matcher
     # It checks if the 'X-Proxy-Token' header matches your secret env var
     @authenticated header X-Proxy-Token "{$TTS_PROXY_ACCESS_TOKEN}"
