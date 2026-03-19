@@ -166,6 +166,7 @@ That's it. No further changes are needed when credentials rotate.
 | 1    | Azure login failed, or `TTS_PROXY_ACCESS_TOKEN` is too short (< 12 chars) |
 | 2    | Resource group `TTS` not found                                            |
 | 3    | Template spec `audio-book-tts` not found                                  |
+| 4    | Failed to retrieve valid API keys from Azure                              |
 
 ## Development
 
@@ -304,12 +305,6 @@ The script currently assumes the resource group `TTS` and the template spec `aud
 The upstream Azure TTS endpoint (`westus2.tts.speech.microsoft.com`) is hardcoded in `Caddyfile.template`.
 
 - Derive the region from `deployment-input.json` or an environment variable and inject it into the Caddy config at startup.
-
-### Improve error handling in the recreation script
-
-- Add `set -euo pipefail` for stricter failure detection.
-- Validate that `show_keys` actually received valid keys before writing the Caddy config (currently proceeds silently on failure).
-- Add retry logic for transient Azure API errors during delete/purge/create.
 
 ### Configurable audio output format
 

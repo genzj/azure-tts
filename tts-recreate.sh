@@ -1,10 +1,34 @@
 #!/bin/bash
+set -euo pipefail
 
-if [[ $TTS_DEBUG -gt 0 ]]; then
+MAX_RETRIES=3
+RETRY_DELAY=10
+
+# Retry a command up to MAX_RETRIES times with exponential backoff.
+# Usage: with_retry <description> <command...>
+with_retry() {
+	local desc="$1"
+	shift
+	local attempt
+	for attempt in $(seq 1 "$MAX_RETRIES"); do
+		if "$@"; then
+			return 0
+		fi
+		if [[ $attempt -lt $MAX_RETRIES ]]; then
+			local delay=$((RETRY_DELAY * attempt))
+			echo "WARN: $desc failed (attempt $attempt/$MAX_RETRIES), retrying in ${delay}s..." >&2
+			sleep "$delay"
+		fi
+	done
+	echo "ERROR: $desc failed after $MAX_RETRIES attempts" >&2
+	return 1
+}
+
+if [[ ${TTS_DEBUG:-0} -gt 0 ]]; then
 	env | sort
 fi
 
-if [[ $TTS_DEBUG -gt 1 ]]; then
+if [[ ${TTS_DEBUG:-0} -gt 1 ]]; then
 	set -x
 fi
 
@@ -51,7 +75,8 @@ delete_resources() {
 	# Delete each found service
 	while IFS= read -r service_name; do
 		echo "Deleting Speech Service: $service_name"
-		az cognitiveservices account delete \
+		with_retry "delete $service_name" \
+			az cognitiveservices account delete \
 			--resource-group "TTS" \
 			--name "$service_name"
 	done <<<"$services"
@@ -61,9 +86,21 @@ purge_resources() {
 	local subscriptionId
 	subscriptionId="$(az account show --query id -o tsv)"
 	echo "Purging all cognitive services in $subscriptionId"
-	az rest --method get \
+	local deleted_ids
+	deleted_ids="$(with_retry "list deleted accounts" \
+		az rest --method get \
 		--uri "/subscriptions/$subscriptionId/providers/Microsoft.CognitiveServices/deletedAccounts?api-version=2023-05-01" \
-		--query "value[].id" -o tsv | xargs az resource delete --ids
+		--query "value[].id" -o tsv)"
+	if [[ -n "$deleted_ids" ]]; then
+		local id
+		while IFS= read -r id; do
+			[[ -n "$id" ]] || continue
+			echo "Purging deleted account: $id"
+			with_retry "purge $id" az resource delete --ids "$id"
+		done <<<"$deleted_ids"
+	else
+		echo "No deleted accounts to purge"
+	fi
 	sleep 5
 }
 
@@ -81,7 +118,8 @@ create_resources() {
 	else
 		inputfile="deployment-input.json"
 	fi
-	az deployment group create \
+	with_retry "deploy template" \
+		az deployment group create \
 		--resource-group "TTS" \
 		--template-spec "${tsId}" \
 		--parameters "@${inputfile}"
@@ -99,13 +137,21 @@ show_keys() {
 	key1="$(echo "$keys" | jq -r '.key1')"
 	key2="$(echo "$keys" | jq -r '.key2')"
 
+	# Validate that we actually received non-empty, non-null keys
+	if [[ -z "$key1" || "$key1" == "null" || -z "$key2" || "$key2" == "null" ]]; then
+		echo "ERROR: Failed to retrieve valid API keys from Azure."
+		echo "  key1=${key1:-<empty>}  key2=${key2:-<empty>}"
+		echo "Refusing to write Caddy config with invalid credentials."
+		exit 4
+	fi
+
 	mkdir -p /etc/caddy
 	# shellcheck disable=SC2016
 	AZURE_TTS_KEY="$key2" envsubst '${AZURE_TTS_KEY}' <./Caddyfile.template >/etc/caddy/Caddyfile
 
 	local NL=$'\n'
 
-	if [[ -n $NOTE_MANAGE_URL ]]; then
+	if [[ -n ${NOTE_MANAGE_URL:-} ]]; then
 		if ! curl -X PUT -Fc="${key1}${NL}${key2}${NL}" -Fe="300d" "$NOTE_MANAGE_URL"; then
 			echo "WARN: update key notes failed"
 		else
@@ -113,7 +159,7 @@ show_keys() {
 		fi
 	fi
 
-	if [[ -n $TELEGRAM_BOT_TOKEN && -n $TELEGRAM_CHAT_ID ]]; then
+	if [[ -n ${TELEGRAM_BOT_TOKEN:-} && -n ${TELEGRAM_CHAT_ID:-} ]]; then
 		if ! curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
 			-d "chat_id=${TELEGRAM_CHAT_ID}" \
 			-d "parse_mode=HTML" \
@@ -144,7 +190,7 @@ start_caddy() {
 	exec caddy "run" "--config" "/etc/caddy/Caddyfile" "--adapter" "caddyfile"
 }
 
-if [[ $TTS_DEBUG -gt 2 ]]; then
+if [[ ${TTS_DEBUG:-0} -gt 2 ]]; then
 	echo "DRY RUN mode: skip recreation."
 else
 	ensure_resources
