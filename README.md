@@ -63,6 +63,7 @@ Client --> POST /tts --> TTS Proxy (Caddy :80) --> Azure TTS API
    ```bash
    curl -X POST http://localhost/tts \
      -H "X-Proxy-Token: <your-TTS_PROXY_ACCESS_TOKEN>" \
+     -H "X-Microsoft-OutputFormat: audio-48khz-192kbitrate-mono-mp3" \
      -d "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'>\
           <voice name='en-US-JennyNeural'>Hello from the TTS proxy.</voice>\
          </speak>" \
@@ -130,9 +131,10 @@ Proxies a TTS synthesis request to Azure Cognitive Services.
 
 **Headers:**
 
-| Header          | Required | Description                         |
-| --------------- | -------- | ----------------------------------- |
-| `X-Proxy-Token` | Yes      | Must match `TTS_PROXY_ACCESS_TOKEN` |
+| Header                     | Required | Description                                                                                                      |
+| -------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------- |
+| `X-Proxy-Token`            | Yes      | Must match `TTS_PROXY_ACCESS_TOKEN`                                                                              |
+| `X-Microsoft-OutputFormat` | No       | Azure TTS output format (e.g. `audio-48khz-192kbitrate-mono-mp3`). Defaults to `audio-16khz-32kbitrate-mono-mp3` |
 
 **Body:** SSML payload (the proxy sets `Content-Type: application/ssml+xml` upstream).
 
@@ -146,7 +148,7 @@ The proxy itself may return the following:
 | `404 Not Found`          | Path is not `/tts`                 |
 | `405 Method Not Allowed` | Non-POST method on `/tts`          |
 
-When the request passes proxy validation, it is forwarded to Azure TTS. The Azure response (status codes, headers, and body — typically an `audio-16khz-32kbitrate-mono-mp3` audio stream) is returned to the client transparently.
+When the request passes proxy validation, it is forwarded to Azure TTS. The Azure response (status codes, headers, and body — an audio stream in the format specified by `X-Microsoft-OutputFormat`, or `audio-16khz-32kbitrate-mono-mp3` by default) is returned to the client transparently.
 
 ## Client Migration Guide
 
@@ -154,8 +156,9 @@ If you were previously calling the Azure TTS API directly:
 
 1. Replace the Azure endpoint (`https://<region>.tts.speech.microsoft.com/cognitiveservices/v1`) with your proxy URL (`http://<proxy-host>/tts`).
 2. Replace the `Ocp-Apim-Subscription-Key` header with `X-Proxy-Token: <your-TTS_PROXY_ACCESS_TOKEN>`.
-3. Remove any `Content-Type`, `X-Microsoft-OutputFormat`, and `User-Agent` headers — the proxy injects these automatically.
-4. Keep sending the same SSML body as before.
+3. Remove any `Content-Type` and `User-Agent` headers — the proxy injects these automatically.
+4. `X-Microsoft-OutputFormat` is now transparently forwarded to Azure. If omitted, the proxy defaults to `audio-16khz-32kbitrate-mono-mp3`.
+5. Keep sending the same SSML body as before.
 
 That's it. No further changes are needed when credentials rotate.
 
@@ -305,12 +308,6 @@ The script currently assumes the resource group `TTS` and the template spec `aud
 The upstream Azure TTS endpoint (`westus2.tts.speech.microsoft.com`) is hardcoded in `Caddyfile.template`.
 
 - Derive the region from `deployment-input.json` or an environment variable and inject it into the Caddy config at startup.
-
-### Configurable audio output format
-
-`X-Microsoft-OutputFormat` is hardcoded to `audio-16khz-32kbitrate-mono-mp3` in the Caddyfile template.
-
-- Allow clients to pass their desired output format via a request header and forward it to Azure, falling back to the current default.
 
 ### Production docker-compose with port mapping and restart policy
 
