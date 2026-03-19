@@ -10,6 +10,5 @@
 Dockerfile
 README.md
 Thumbs.db
-data/
 mise.toml
 test.sh

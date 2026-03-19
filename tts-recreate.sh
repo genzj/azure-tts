@@ -41,20 +41,22 @@ if ! az login \
 	exit 1
 fi
 
+# shellcheck source=ensure-azure-resources.sh
+source "$(dirname "$0")/ensure-azure-resources.sh"
+
 ensure_resources() {
-	# Check if resource group "TTS" exists
-	if ! az group show --name "TTS" >/dev/null; then
-		echo "Resource group 'TTS' does not exist"
-		exit 2
+	# Check if resource group "TTS" exists, create if missing
+	if ! az group show --name "TTS" >/dev/null 2>&1; then
+		provision_resource_group
 	else
 		echo "Found resource group TTS"
 	fi
-	# Check if deployment "audio-book-tts" exists in resource group "TTS"
-	if ! az resource list --query "[?name=='audio-book-tts' && type=='Microsoft.Resources/templateSpecs']" >/dev/null; then
-		echo "Deployment 'audio-book-tts' does not exist in resource group 'TTS'"
-		exit 3
+	# Check if template spec "audio-book-tts" exists, create if missing
+	if ! az ts show --name "audio-book-tts" --resource-group "TTS" --version "v1" >/dev/null 2>&1; then
+		provision_template_spec
 	else
-		echo "Found deployment audio-book-tts"
+		echo "Found template spec audio-book-tts"
+		update_template_spec
 	fi
 }
 

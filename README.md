@@ -29,8 +29,8 @@ Client --> POST /tts --> TTS Proxy (Caddy :80) --> Azure TTS API
 
 - Azure CLI installed and configured (included in the Docker image)
 - Azure service principal with appropriate permissions (see [Create an Azure Service Principal](#create-an-azure-service-principal))
-- Resource group `TTS` in your Azure subscription
-- Template spec `audio-book-tts` (from `data/audio-book-tts.json`) uploaded to the resource group
+
+The resource group `TTS` and the template spec `audio-book-tts` are created automatically on first run if they do not already exist. An existing template spec is also updated when the bundled ARM template has changed.
 
 ## Quick Start (Docker)
 
@@ -111,8 +111,8 @@ az ad sp create-for-rbac --name "tts-recreator" --role Owner --scopes /subscript
 Ideally, use least-privilege roles instead of `Owner`:
 
 - `Cognitive Services Contributor` on the TTS resource group
-- `Template Spec Reader` for deployment operations
-- `Resource Group Reader` for validation
+- `Template Spec Contributor` for template spec creation and updates
+- `Resource Group Contributor` for auto-creating the resource group (or `Resource Group Reader` if the group already exists)
 
 ## Proxy API Reference
 
@@ -167,8 +167,8 @@ That's it. No further changes are needed when credentials rotate.
 | Code | Description                                                               |
 | ---- | ------------------------------------------------------------------------- |
 | 1    | Azure login failed, or `TTS_PROXY_ACCESS_TOKEN` is too short (< 12 chars) |
-| 2    | Resource group `TTS` not found                                            |
-| 3    | Template spec `audio-book-tts` not found                                  |
+| 2    | Resource group `TTS` could not be found or created                        |
+| 3    | Template spec `audio-book-tts` could not be found or created              |
 | 4    | Failed to retrieve valid API keys from Azure                              |
 
 ## Development
@@ -244,9 +244,8 @@ Set `TTS_DEBUG` in `.env` to control debug output:
 
 **Resource Not Found**
 
-- Confirm resource group `TTS` exists in your subscription.
-- Verify template spec `audio-book-tts` is deployed.
-- Check your service principal has read access.
+- Check your service principal has the required permissions to create resource groups and template specs.
+- If auto-provisioning fails, you can manually create the resource group and upload the template spec (see error codes 2 and 3).
 
 **Deployment Failures**
 
@@ -294,14 +293,6 @@ Currently the recreation script and the Caddy proxy run sequentially in a single
 - Enable the Caddy admin API listener (currently unused) and secure it for internal-only access.
 - Allow horizontal scaling of the proxy behind a load balancer while a single recreator instance manages the lifecycle.
 - Achieve zero-downtime credential rotation — clients experience no interruption during recreation.
-
-### Self-provisioning of Azure resources
-
-The script currently assumes the resource group `TTS` and the template spec `audio-book-tts` already exist, requiring manual setup.
-
-- Auto-create the `TTS` resource group if it does not exist.
-- Upload `data/audio-book-tts.json` as a template spec when missing or outdated.
-- Reduce prerequisites to just an Azure service principal and a subscription ID.
 
 ### Make the Azure region configurable
 

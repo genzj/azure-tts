@@ -31,6 +31,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=300s --retries=3 \
 WORKDIR /app
 COPY *.sh ./
 COPY *.template ./
+COPY data/ ./data/
 
 # Ensure scripts have execution permissions
 RUN chmod +x /app/*.sh
