@@ -136,9 +136,12 @@ You need a service principal so the container can log in to Azure and manage TTS
 4. Assign the recommended least-privilege roles:
 
    ```bash
+   # Manage TTS resources and purge soft-deleted accounts (subscription
+   # scope is required because purge operates on a subscription-level
+   # resource path outside any single resource group)
    az role assignment create --assignee "$SP_APPID" \
      --role "Cognitive Services Contributor" \
-     --scope "/subscriptions/$SUBSCRIPTION_ID/resourceGroups/TTS"
+     --scope "/subscriptions/$SUBSCRIPTION_ID"
 
    az role assignment create --assignee "$SP_APPID" \
      --role "Template Spec Contributor" \
