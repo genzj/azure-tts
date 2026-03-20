@@ -1,6 +1,12 @@
 # Listen on HTTP only and API gateway should terminate the SSL
 
 :80 {
+    # Use client-supplied X-Microsoft-OutputFormat if present, otherwise fall back to default
+    map {header.X-Microsoft-OutputFormat} {tts_output_format} {
+        ~.+ {header.X-Microsoft-OutputFormat}
+        default "audio-16khz-32kbitrate-mono-mp3"
+    }
+
     # Health check endpoint — no authentication required
     handle /healthz {
         respond "OK" 200
@@ -27,7 +33,7 @@
                     # 3. Azure-required headers
                     header_up Host {upstream_hostport}
                     header_up Content-Type "application/ssml+xml"
-                    header_up X-Microsoft-OutputFormat "audio-16khz-32kbitrate-mono-mp3"
+                    header_up X-Microsoft-OutputFormat {tts_output_format}
                     header_up User-Agent "generate-tts-proxy"
 
                     # Ensure we don't pass the original Host header from the Gateway

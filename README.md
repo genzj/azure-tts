@@ -29,8 +29,8 @@ Client --> POST /tts --> TTS Proxy (Caddy :80) --> Azure TTS API
 
 - Azure CLI installed and configured (included in the Docker image)
 - Azure service principal with appropriate permissions (see [Create an Azure Service Principal](#create-an-azure-service-principal))
-- Resource group `TTS` in your Azure subscription
-- Template spec `audio-book-tts` (from `data/audio-book-tts.json`) uploaded to the resource group
+
+The resource group `TTS` and the template spec `audio-book-tts` are created automatically on first run if they do not already exist. An existing template spec is also updated when the bundled ARM template has changed.
 
 ## Quick Start (Docker)
 
@@ -63,6 +63,7 @@ Client --> POST /tts --> TTS Proxy (Caddy :80) --> Azure TTS API
    ```bash
    curl -X POST http://localhost/tts \
      -H "X-Proxy-Token: <your-TTS_PROXY_ACCESS_TOKEN>" \
+     -H "X-Microsoft-OutputFormat: audio-48khz-192kbitrate-mono-mp3" \
      -d "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'>\
           <voice name='en-US-JennyNeural'>Hello from the TTS proxy.</voice>\
          </speak>" \
@@ -110,8 +111,8 @@ az ad sp create-for-rbac --name "tts-recreator" --role Owner --scopes /subscript
 Ideally, use least-privilege roles instead of `Owner`:
 
 - `Cognitive Services Contributor` on the TTS resource group
-- `Template Spec Reader` for deployment operations
-- `Resource Group Reader` for validation
+- `Template Spec Contributor` for template spec creation and updates
+- `Resource Group Contributor` for auto-creating the resource group (or `Resource Group Reader` if the group already exists)
 
 ## Proxy API Reference
 
@@ -130,9 +131,10 @@ Proxies a TTS synthesis request to Azure Cognitive Services.
 
 **Headers:**
 
-| Header          | Required | Description                         |
-| --------------- | -------- | ----------------------------------- |
-| `X-Proxy-Token` | Yes      | Must match `TTS_PROXY_ACCESS_TOKEN` |
+| Header                     | Required | Description                                                                                                      |
+| -------------------------- | -------- | ---------------------------------------------------------------------------------------------------------------- |
+| `X-Proxy-Token`            | Yes      | Must match `TTS_PROXY_ACCESS_TOKEN`                                                                              |
+| `X-Microsoft-OutputFormat` | No       | Azure TTS output format (e.g. `audio-48khz-192kbitrate-mono-mp3`). Defaults to `audio-16khz-32kbitrate-mono-mp3` |
 
 **Body:** SSML payload (the proxy sets `Content-Type: application/ssml+xml` upstream).
 
@@ -146,7 +148,7 @@ The proxy itself may return the following:
 | `404 Not Found`          | Path is not `/tts`                 |
 | `405 Method Not Allowed` | Non-POST method on `/tts`          |
 
-When the request passes proxy validation, it is forwarded to Azure TTS. The Azure response (status codes, headers, and body — typically an `audio-16khz-32kbitrate-mono-mp3` audio stream) is returned to the client transparently.
+When the request passes proxy validation, it is forwarded to Azure TTS. The Azure response (status codes, headers, and body — an audio stream in the format specified by `X-Microsoft-OutputFormat`, or `audio-16khz-32kbitrate-mono-mp3` by default) is returned to the client transparently.
 
 ## Client Migration Guide
 
@@ -154,8 +156,9 @@ If you were previously calling the Azure TTS API directly:
 
 1. Replace the Azure endpoint (`https://<region>.tts.speech.microsoft.com/cognitiveservices/v1`) with your proxy URL (`http://<proxy-host>/tts`).
 2. Replace the `Ocp-Apim-Subscription-Key` header with `X-Proxy-Token: <your-TTS_PROXY_ACCESS_TOKEN>`.
-3. Remove any `Content-Type`, `X-Microsoft-OutputFormat`, and `User-Agent` headers — the proxy injects these automatically.
-4. Keep sending the same SSML body as before.
+3. Remove any `Content-Type` and `User-Agent` headers — the proxy injects these automatically.
+4. `X-Microsoft-OutputFormat` is now transparently forwarded to Azure. If omitted, the proxy defaults to `audio-16khz-32kbitrate-mono-mp3`.
+5. Keep sending the same SSML body as before.
 
 That's it. No further changes are needed when credentials rotate.
 
@@ -164,8 +167,8 @@ That's it. No further changes are needed when credentials rotate.
 | Code | Description                                                               |
 | ---- | ------------------------------------------------------------------------- |
 | 1    | Azure login failed, or `TTS_PROXY_ACCESS_TOKEN` is too short (< 12 chars) |
-| 2    | Resource group `TTS` not found                                            |
-| 3    | Template spec `audio-book-tts` not found                                  |
+| 2    | Resource group `TTS` could not be found or created                        |
+| 3    | Template spec `audio-book-tts` could not be found or created              |
 | 4    | Failed to retrieve valid API keys from Azure                              |
 
 ## Development
@@ -241,9 +244,8 @@ Set `TTS_DEBUG` in `.env` to control debug output:
 
 **Resource Not Found**
 
-- Confirm resource group `TTS` exists in your subscription.
-- Verify template spec `audio-book-tts` is deployed.
-- Check your service principal has read access.
+- Check your service principal has the required permissions to create resource groups and template specs.
+- If auto-provisioning fails, you can manually create the resource group and upload the template spec (see error codes 2 and 3).
 
 **Deployment Failures**
 
@@ -292,25 +294,11 @@ Currently the recreation script and the Caddy proxy run sequentially in a single
 - Allow horizontal scaling of the proxy behind a load balancer while a single recreator instance manages the lifecycle.
 - Achieve zero-downtime credential rotation — clients experience no interruption during recreation.
 
-### Self-provisioning of Azure resources
-
-The script currently assumes the resource group `TTS` and the template spec `audio-book-tts` already exist, requiring manual setup.
-
-- Auto-create the `TTS` resource group if it does not exist.
-- Upload `data/audio-book-tts.json` as a template spec when missing or outdated.
-- Reduce prerequisites to just an Azure service principal and a subscription ID.
-
 ### Make the Azure region configurable
 
 The upstream Azure TTS endpoint (`westus2.tts.speech.microsoft.com`) is hardcoded in `Caddyfile.template`.
 
 - Derive the region from `deployment-input.json` or an environment variable and inject it into the Caddy config at startup.
-
-### Configurable audio output format
-
-`X-Microsoft-OutputFormat` is hardcoded to `audio-16khz-32kbitrate-mono-mp3` in the Caddyfile template.
-
-- Allow clients to pass their desired output format via a request header and forward it to Azure, falling back to the current default.
 
 ### Production docker-compose with port mapping and restart policy
 
