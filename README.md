@@ -284,6 +284,30 @@ This project is licensed under the MIT License — see the [LICENSE](LICENSE) fi
 
 ## TODO
 
+### Simplify Provisioning
+
+Goal: a user should only need to set `AZURE_APPID`, `AZURE_PASSWORD`, `AZURE_TENANT`, and `TTS_PROXY_ACCESS_TOKEN` in `.env`, then `docker compose up`. Everything else is derived or defaulted.
+
+1. **Create `deployment-input.json.template`** — A template using `envsubst` placeholders (`${AZURE_SUBSCRIPTION_ID}`, `${AZURE_LOCATION}`, `${AZURE_TTS_RESOURCE_NAME}`, etc.). Bundled in the image at `/app/data/` but overridable by mounting a custom template into `/input/`.
+
+2. **Auto-resolve subscription ID at runtime** — If `AZURE_SUBSCRIPTION_ID` is not set in `.env`, auto-detect it after `az login` via `az account show --query id -o tsv` and export it for `envsubst`. If the service principal has access to multiple subscriptions, auto-detection may pick the wrong one; in that case the user must set `AZURE_SUBSCRIPTION_ID` explicitly in `.env`.
+
+3. **Generate `deployment-input.json` from template** — In `tts-recreate.sh`, before `create_resources`, run `envsubst` on the template to produce `/input/deployment-input.json`. Template resolution order: `/input/deployment-input.json.template` (user-mounted) → `/app/data/deployment-input.json.template` (bundled default). If a pre-built `/input/deployment-input.json` already exists (backward compat), use it as-is and skip generation.
+
+4. **Make location configurable via `.env`** — Add optional `AZURE_LOCATION` env var (default `westus2`). Used in the deployment template and for the Caddy upstream URL.
+
+5. **Make resource name configurable via `.env`** — Add optional `AZURE_TTS_RESOURCE_NAME` env var (default `audio-book`). Used in the deployment template and in `show_keys`/`delete_resources` (replacing the currently hardcoded name).
+
+6. **Inject region into Caddyfile dynamically** — Replace the hardcoded `westus2` in `Caddyfile.template` with `${AZURE_LOCATION}`, and add it to the `envsubst` call that already handles `${AZURE_TTS_KEY}`.
+
+7. **Update `.env.sample`** — Show the 4 required fields (`AZURE_APPID`, `AZURE_PASSWORD`, `AZURE_TENANT`, `TTS_PROXY_ACCESS_TOKEN`) and the new optional ones (`AZURE_LOCATION`, `AZURE_TTS_RESOURCE_NAME`) with defaults documented in comments.
+
+8. **Document how to find the Azure tenant ID** — Add a README section (near the service principal instructions) explaining how to find it: from `az ad sp create-for-rbac` output, `az account show --query tenantId`, or Azure Portal (Microsoft Entra ID → Overview → Tenant ID).
+
+9. **Update README Quick Start** — Simplify to: copy `.env.sample` → `.env`, fill in 4 required values, `docker compose up`. Mention `deployment-input.json.template` only in an advanced configuration section.
+
+10. **Handle `uniqueId` in template** — Generate a UUID at runtime and export it for `envsubst`.
+
 ### Separate recreator and proxy into independent services
 
 Currently the recreation script and the Caddy proxy run sequentially in a single container — the proxy is unavailable during recreation and cannot scale independently.
@@ -293,12 +317,6 @@ Currently the recreation script and the Caddy proxy run sequentially in a single
 - Enable the Caddy admin API listener (currently unused) and secure it for internal-only access.
 - Allow horizontal scaling of the proxy behind a load balancer while a single recreator instance manages the lifecycle.
 - Achieve zero-downtime credential rotation — clients experience no interruption during recreation.
-
-### Make the Azure region configurable
-
-The upstream Azure TTS endpoint (`westus2.tts.speech.microsoft.com`) is hardcoded in `Caddyfile.template`.
-
-- Derive the region from `deployment-input.json` or an environment variable and inject it into the Caddy config at startup.
 
 ### Production docker-compose with port mapping and restart policy
 
