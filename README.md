@@ -27,23 +27,20 @@ Client --> POST /tts --> TTS Proxy (Caddy :80) --> Azure TTS API
 
 ## Prerequisites
 
-- Azure CLI installed and configured (included in the Docker image)
 - Azure service principal with appropriate permissions (see [Create an Azure Service Principal](#create-an-azure-service-principal))
+- Azure CLI installed and configured (local run only, not needed for running with the Docker image)
 
 The resource group `TTS` and the template spec `audio-book-tts` are created automatically on first run if they do not already exist. An existing template spec is also updated when the bundled ARM template has changed.
 
 ## Quick Start (Docker)
 
-1. Download [docker-compose.yml](docker-compose.yml), [.env.sample](.env.sample), and [deployment-input-sample.json](data/deployment-input-sample.json).
+1. Download [docker-compose.yml](docker-compose.yml) and [.env.sample](.env.sample).
 
-2. Prepare configuration files:
+2. Prepare your `.env` file:
 
    ```bash
    cp .env.sample .env
-   # Edit .env with your Azure credentials and proxy token
-
-   cp deployment-input-sample.json deployment-input.json
-   # Replace <SUBSCRIPTION_ID> with your Azure subscription id
+   # Edit .env — fill in the 4 required values (see below)
    ```
 
 3. Run with Docker Compose:
@@ -55,8 +52,10 @@ The resource group `TTS` and the template spec `audio-book-tts` are created auto
    Or run directly:
 
    ```bash
-   docker run --rm --env-file .env --volume '.:/input' -p 80:80 ghcr.io/genzj/azure-tts:latest
+   docker run --rm --env-file .env -p 80:80 ghcr.io/genzj/azure-tts:latest
    ```
+
+   The container will automatically detect your subscription ID, generate the deployment parameters, create the Azure resources, and start the proxy.
 
 4. Send a TTS request through the proxy:
 
@@ -76,43 +75,100 @@ The resource group `TTS` and the template spec `audio-book-tts` are created auto
 
 Configure these in your `.env` file:
 
-| Variable                 | Required | Description                                                                                           |
-| ------------------------ | -------- | ----------------------------------------------------------------------------------------------------- |
-| `AZURE_APPID`            | Yes      | Service principal application ID                                                                      |
-| `AZURE_PASSWORD`         | Yes      | Service principal password / secret                                                                   |
-| `AZURE_TENANT`           | Yes      | Azure AD tenant ID                                                                                    |
-| `TTS_PROXY_ACCESS_TOKEN` | Yes      | Static token clients use to authenticate with the proxy (min 12 characters)                           |
-| `TELEGRAM_BOT_TOKEN`     | No       | Telegram bot token for key-change notifications                                                       |
-| `TELEGRAM_CHAT_ID`       | No       | Telegram chat ID for notifications                                                                    |
-| `NOTE_MANAGE_URL`        | No       | Manage URL of a [pastebin-worker](https://github.com/SharzyL/pastebin-worker) note for key publishing |
-| `TTS_DEBUG`              | No       | Debug level: 0 = off, 1 = print env, 2 = print env + trace, 3 = dry run (see [Debugging](#debugging)) |
+| Variable                  | Required | Default           | Description                                                                                                                              |
+| ------------------------- | -------- | ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `AZURE_APPID`             | Yes      |                   | Service principal application ID                                                                                                         |
+| `AZURE_PASSWORD`          | Yes      |                   | Service principal password / secret                                                                                                      |
+| `AZURE_TENANT`            | Yes      |                   | Azure AD tenant ID (see [Finding Your Tenant ID](#finding-your-tenant-id))                                                               |
+| `TTS_PROXY_ACCESS_TOKEN`  | Yes      |                   | Static token clients use to authenticate with the proxy (min 12 characters)                                                              |
+| `AZURE_SUBSCRIPTION_ID`   | No       | _(auto-detected)_ | Azure subscription ID. Auto-detected after login; must be set explicitly when the service principal has access to multiple subscriptions |
+| `AZURE_LOCATION`          | No       | `westus2`         | Azure region for the TTS resource and Caddy upstream URL                                                                                 |
+| `AZURE_TTS_RESOURCE_NAME` | No       | `audio-book`      | Name of the Cognitive Services resource                                                                                                  |
+| `TELEGRAM_BOT_TOKEN`      | No       |                   | Telegram bot token for key-change notifications                                                                                          |
+| `TELEGRAM_CHAT_ID`        | No       |                   | Telegram chat ID for notifications                                                                                                       |
+| `NOTE_MANAGE_URL`         | No       |                   | Manage URL of a [pastebin-worker](https://github.com/SharzyL/pastebin-worker) note for key publishing                                    |
+| `TTS_DEBUG`               | No       | `0`               | Debug level: 0 = off, 1 = print env, 2 = print env + trace, 3 = dry run (see [Debugging](#debugging))                                    |
 
-### Deployment Parameters
+### Advanced: Custom Deployment Parameters
 
-Edit `deployment-input.json` to customise the Azure resource deployment. Key parameters:
+For most users, the built-in `deployment-input.json.template` generates the correct deployment parameters automatically from environment variables. No manual file editing is needed.
 
-| Parameter  | Default        | Description                             |
-| ---------- | -------------- | --------------------------------------- |
-| `name`     | `audio-book-2` | Name of the Cognitive Services resource |
-| `location` | `westus2`      | Azure region                            |
-| `sku`      | `F0`           | Pricing tier (F0 = free)                |
+If you need full control over the ARM deployment parameters, mount a modified `deployment-input.json.template` into `/input/`. Available placeholders: `${AZURE_SUBSCRIPTION_ID}`, `${AZURE_LOCATION}`, `${AZURE_TTS_RESOURCE_NAME}`, `${AZURE_UNIQUE_ID}`.
 
-Replace `<SUBSCRIPTION_ID>` in the file with your actual Azure subscription ID.
+Template resolution order:
+
+1. `/input/deployment-input.json.template` (user-mounted custom template)
+2. `/app/data/deployment-input.json.template` (bundled default)
 
 ### Create an Azure Service Principal
 
-Create a service principal scoped to your subscription:
+You need a service principal so the container can log in to Azure and manage TTS resources. All built-in roles used below are available on every Azure account tier, including free.
 
-```bash
-# https://learn.microsoft.com/en-us/cli/azure/azure-cli-sp-tutorial-1
-az ad sp create-for-rbac --name "tts-recreator" --role Owner --scopes /subscriptions/<SUBSCRIPTION_ID>
-```
+1. Find and export your subscription ID:
 
-Ideally, use least-privilege roles instead of `Owner`:
+   ```bash
+   az account list --query "[].{Name:name, Id:id}" -o table
 
-- `Cognitive Services Contributor` on the TTS resource group
-- `Template Spec Contributor` for template spec creation and updates
-- `Resource Group Contributor` for auto-creating the resource group (or `Resource Group Reader` if the group already exists)
+   export SUBSCRIPTION_ID="<copy your subscription ID from the table above>"
+   ```
+
+2. Create the resource group (so role assignments can be scoped to it):
+
+   ```bash
+   az group create --name TTS --location westus2
+   ```
+
+3. Create the service principal:
+
+   ```bash
+   # ⚠ The output contains appId, password, and tenant — save them
+   #   somewhere secure immediately. The password is shown only once
+   #   and cannot be retrieved later.
+   az ad sp create-for-rbac --name "tts-recreator"
+   ```
+
+   Export the `appId` from the output for the next step:
+
+   ```bash
+   export SP_APPID="<copy appId from the output above>"
+   ```
+
+4. Assign the recommended least-privilege roles:
+
+   ```bash
+   az role assignment create --assignee "$SP_APPID" \
+     --role "Cognitive Services Contributor" \
+     --scope "/subscriptions/$SUBSCRIPTION_ID/resourceGroups/TTS"
+
+   az role assignment create --assignee "$SP_APPID" \
+     --role "Template Spec Contributor" \
+     --scope "/subscriptions/$SUBSCRIPTION_ID/resourceGroups/TTS"
+
+   az role assignment create --assignee "$SP_APPID" \
+     --role "Reader" \
+     --scope "/subscriptions/$SUBSCRIPTION_ID"
+   ```
+
+   > If you skipped step 2 and want the container to create the resource group automatically on first run, replace `Reader` with `Contributor` at the subscription scope. You can downgrade it to `Reader` afterwards.
+
+5. Copy `appId`, `password`, and `tenant` from the step 3 output into your `.env` as `AZURE_APPID`, `AZURE_PASSWORD`, and `AZURE_TENANT`.
+
+> **Quick alternative:** If you just want to get started and will tighten permissions later, a single command does everything:
+>
+> ```bash
+> az ad sp create-for-rbac --name "tts-recreator" \
+>   --role Owner --scopes "/subscriptions/$SUBSCRIPTION_ID"
+> ```
+>
+> This grants full control over the subscription — not recommended for production use. See the [Azure CLI documentation](https://learn.microsoft.com/en-us/cli/azure/azure-cli-sp-tutorial-1) for details.
+
+### Finding Your Tenant ID
+
+Your Azure AD tenant ID is required in `.env` as `AZURE_TENANT`. You can find it in several ways:
+
+- **From `az ad sp create-for-rbac` output** — The `tenant` field in the JSON output when you created the service principal.
+- **Azure CLI** — Run `az account show --query tenantId -o tsv`.
+- **Azure Portal** — Navigate to **Microsoft Entra ID** → **Overview** → **Tenant ID**.
 
 ## Proxy API Reference
 
@@ -164,12 +220,12 @@ That's it. No further changes are needed when credentials rotate.
 
 ## Error Codes
 
-| Code | Description                                                               |
-| ---- | ------------------------------------------------------------------------- |
-| 1    | Azure login failed, or `TTS_PROXY_ACCESS_TOKEN` is too short (< 12 chars) |
-| 2    | Resource group `TTS` could not be found or created                        |
-| 3    | Template spec `audio-book-tts` could not be found or created              |
-| 4    | Failed to retrieve valid API keys from Azure                              |
+| Code | Description                                                                                   |
+| ---- | --------------------------------------------------------------------------------------------- |
+| 1    | Azure login failed, or `TTS_PROXY_ACCESS_TOKEN` is too short (< 12 chars)                     |
+| 2    | Resource group `TTS` could not be found or created                                            |
+| 3    | Template spec `audio-book-tts` could not be found or created, or no deployment template found |
+| 4    | Failed to retrieve valid API keys from Azure                                                  |
 
 ## Development
 
@@ -197,15 +253,13 @@ That's it. No further changes are needed when credentials rotate.
 
    ```bash
    cp .env.sample .env
-   cp data/deployment-input-sample.json deployment-input.json
-   # Edit both files with your values
+   # Edit .env with your 4 required values
    ```
 
 5. Build and run locally:
 
    ```bash
-   docker build -t azure-tts:latest .
-   docker compose -f docker-compose-dev.yml up
+   docker compose -f docker-compose-dev.yml up --build
    ```
 
    The dev compose file maps port `9980` → `80` inside the container.
@@ -249,7 +303,7 @@ Set `TTS_DEBUG` in `.env` to control debug output:
 
 **Deployment Failures**
 
-- Validate `deployment-input.json` parameters.
+- Check the environment variables (`AZURE_LOCATION`, `AZURE_TTS_RESOURCE_NAME`) or your custom `deployment-input.json.template` if mounted.
 - Ensure template spec version `v1` is accessible.
 - Check resource quotas in your subscription.
 
@@ -283,30 +337,6 @@ Set `TTS_DEBUG` in `.env` to control debug output:
 This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
 
 ## TODO
-
-### Simplify Provisioning
-
-Goal: a user should only need to set `AZURE_APPID`, `AZURE_PASSWORD`, `AZURE_TENANT`, and `TTS_PROXY_ACCESS_TOKEN` in `.env`, then `docker compose up`. Everything else is derived or defaulted.
-
-1. **Create `deployment-input.json.template`** — A template using `envsubst` placeholders (`${AZURE_SUBSCRIPTION_ID}`, `${AZURE_LOCATION}`, `${AZURE_TTS_RESOURCE_NAME}`, etc.). Bundled in the image at `/app/data/` but overridable by mounting a custom template into `/input/`.
-
-2. **Auto-resolve subscription ID at runtime** — If `AZURE_SUBSCRIPTION_ID` is not set in `.env`, auto-detect it after `az login` via `az account show --query id -o tsv` and export it for `envsubst`. If the service principal has access to multiple subscriptions, auto-detection may pick the wrong one; in that case the user must set `AZURE_SUBSCRIPTION_ID` explicitly in `.env`.
-
-3. **Generate `deployment-input.json` from template** — In `tts-recreate.sh`, before `create_resources`, run `envsubst` on the template to produce `/input/deployment-input.json`. Template resolution order: `/input/deployment-input.json.template` (user-mounted) → `/app/data/deployment-input.json.template` (bundled default). If a pre-built `/input/deployment-input.json` already exists (backward compat), use it as-is and skip generation.
-
-4. **Make location configurable via `.env`** — Add optional `AZURE_LOCATION` env var (default `westus2`). Used in the deployment template and for the Caddy upstream URL.
-
-5. **Make resource name configurable via `.env`** — Add optional `AZURE_TTS_RESOURCE_NAME` env var (default `audio-book`). Used in the deployment template and in `show_keys`/`delete_resources` (replacing the currently hardcoded name).
-
-6. **Inject region into Caddyfile dynamically** — Replace the hardcoded `westus2` in `Caddyfile.template` with `${AZURE_LOCATION}`, and add it to the `envsubst` call that already handles `${AZURE_TTS_KEY}`.
-
-7. **Update `.env.sample`** — Show the 4 required fields (`AZURE_APPID`, `AZURE_PASSWORD`, `AZURE_TENANT`, `TTS_PROXY_ACCESS_TOKEN`) and the new optional ones (`AZURE_LOCATION`, `AZURE_TTS_RESOURCE_NAME`) with defaults documented in comments.
-
-8. **Document how to find the Azure tenant ID** — Add a README section (near the service principal instructions) explaining how to find it: from `az ad sp create-for-rbac` output, `az account show --query tenantId`, or Azure Portal (Microsoft Entra ID → Overview → Tenant ID).
-
-9. **Update README Quick Start** — Simplify to: copy `.env.sample` → `.env`, fill in 4 required values, `docker compose up`. Mention `deployment-input.json.template` only in an advanced configuration section.
-
-10. **Handle `uniqueId` in template** — Generate a UUID at runtime and export it for `envsubst`.
 
 ### Separate recreator and proxy into independent services
 

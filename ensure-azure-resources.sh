@@ -6,32 +6,6 @@
 #   provision_resource_group  — create resource group "TTS" if missing
 #   provision_template_spec   — create or update template spec "audio-book-tts" v1
 
-# Resolve the deployment-input.json location (same logic as create_resources).
-_resolve_input_file() {
-	if [[ -f "/input/deployment-input.json" ]]; then
-		echo "/input/deployment-input.json"
-	elif [[ -f "deployment-input.json" ]]; then
-		echo "deployment-input.json"
-	else
-		echo ""
-	fi
-}
-
-# Read the "location" parameter from deployment-input.json, default to westus2.
-_resolve_location() {
-	local inputfile
-	inputfile="$(_resolve_input_file)"
-	if [[ -n "$inputfile" ]]; then
-		local loc
-		loc="$(jq -r '.parameters.location.value // empty' "$inputfile" 2>/dev/null)"
-		if [[ -n "$loc" ]]; then
-			echo "$loc"
-			return
-		fi
-	fi
-	echo "westus2"
-}
-
 # Resolve the path to the ARM template bundled in the image.
 _resolve_template_file() {
 	if [[ -f "/app/data/audio-book-tts.json" ]]; then
@@ -45,7 +19,7 @@ _resolve_template_file() {
 
 provision_resource_group() {
 	local location
-	location="$(_resolve_location)"
+	location="${AZURE_LOCATION:-westus2}"
 	echo "Resource group 'TTS' does not exist, creating in '$location'..."
 	if ! with_retry "create resource group TTS" \
 		az group create --name "TTS" --location "$location"; then

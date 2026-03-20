@@ -41,6 +41,54 @@ if ! az login \
 	exit 1
 fi
 
+# --- Resolve defaults for optional env vars ---
+
+# Auto-resolve subscription ID at runtime
+if [[ -z "${AZURE_SUBSCRIPTION_ID:-}" ]]; then
+	AZURE_SUBSCRIPTION_ID="$(az account show --query id -o tsv)"
+	echo "Auto-detected AZURE_SUBSCRIPTION_ID=$AZURE_SUBSCRIPTION_ID"
+fi
+export AZURE_SUBSCRIPTION_ID
+
+# Make location configurable via .env (default: westus2)
+export AZURE_LOCATION="${AZURE_LOCATION:-westus2}"
+echo "Using AZURE_LOCATION=$AZURE_LOCATION"
+
+# Make resource name configurable via .env (default: audio-book)
+export AZURE_TTS_RESOURCE_NAME="${AZURE_TTS_RESOURCE_NAME:-audio-book}"
+echo "Using AZURE_TTS_RESOURCE_NAME=$AZURE_TTS_RESOURCE_NAME"
+
+# Generate a UUID for the uniqueId template parameter
+export AZURE_UNIQUE_ID
+AZURE_UNIQUE_ID="$(cat /proc/sys/kernel/random/uuid 2>/dev/null || python3 -c 'import uuid; print(uuid.uuid4())' 2>/dev/null || uuidgen)"
+echo "Generated AZURE_UNIQUE_ID=$AZURE_UNIQUE_ID"
+
+# Generate deployment-input.json from template
+_generate_deployment_input() {
+	local template=""
+
+	# Template resolution order: user-mounted > bundled default > local dev
+	if [[ -f "/input/deployment-input.json.template" ]]; then
+		template="/input/deployment-input.json.template"
+	elif [[ -f "/app/data/deployment-input.json.template" ]]; then
+		template="/app/data/deployment-input.json.template"
+	elif [[ -f "data/deployment-input.json.template" ]]; then
+		template="data/deployment-input.json.template"
+	fi
+
+	if [[ -z "$template" ]]; then
+		echo "ERROR: No deployment-input.json.template found"
+		exit 3
+	fi
+
+	echo "Generating deployment-input.json from template $template"
+	# shellcheck disable=SC2016
+	envsubst '${AZURE_SUBSCRIPTION_ID} ${AZURE_LOCATION} ${AZURE_TTS_RESOURCE_NAME} ${AZURE_UNIQUE_ID}' \
+		<"$template" >/tmp/deployment-input.json
+}
+
+_generate_deployment_input
+
 # shellcheck source=ensure-azure-resources.sh
 source "$(dirname "$0")/ensure-azure-resources.sh"
 
@@ -61,16 +109,17 @@ ensure_resources() {
 }
 
 delete_resources() {
-	# Find all Speech Services with prefix "audio-book-" in resource group "TTS"
+	# Find all Speech Services with the configured resource name prefix in resource group "TTS"
+	local prefix="${AZURE_TTS_RESOURCE_NAME}"
 	local services
 	services=$(az cognitiveservices account list \
 		--resource-group "TTS" \
-		--query "[?kind=='SpeechServices' && starts_with(name, 'audio-book-')].name" \
+		--query "[?kind=='SpeechServices' && starts_with(name, '${prefix}')].name" \
 		--output tsv)
 
 	# If no services found, return
 	if [ -z "$services" ]; then
-		echo "No Speech Services with prefix 'audio-book-' found"
+		echo "No Speech Services with prefix '${prefix}' found"
 		return
 	fi
 
@@ -114,27 +163,22 @@ create_resources() {
 		--version "v1" \
 		--query "id" -o tsv)
 	echo "Deploying template 'audio-book-tts' ($tsId) with parameters from deployment-input.json"
-	local inputfile
-	if [[ -f "/input/deployment-input.json" ]]; then
-		inputfile="/input/deployment-input.json"
-	else
-		inputfile="deployment-input.json"
-	fi
 	with_retry "deploy template" \
 		az deployment group create \
 		--resource-group "TTS" \
 		--template-spec "${tsId}" \
-		--parameters "@${inputfile}"
+		--parameters "@/tmp/deployment-input.json"
 }
 
 show_keys() {
 	local keys
 	local key1
 	local key2
-	echo "Listing API keys for Speech Service 'audio-book-2' in resource group 'TTS'"
+	local resource_name="${AZURE_TTS_RESOURCE_NAME}"
+	echo "Listing API keys for Speech Service '${resource_name}' in resource group 'TTS'"
 	keys="$(az cognitiveservices account keys list \
 		--resource-group "TTS" \
-		--name "audio-book-2")"
+		--name "${resource_name}")"
 	echo "$keys"
 	key1="$(echo "$keys" | jq -r '.key1')"
 	key2="$(echo "$keys" | jq -r '.key2')"
@@ -149,7 +193,7 @@ show_keys() {
 
 	mkdir -p /etc/caddy
 	# shellcheck disable=SC2016
-	AZURE_TTS_KEY="$key2" envsubst '${AZURE_TTS_KEY}' <./Caddyfile.template >/etc/caddy/Caddyfile
+	AZURE_TTS_KEY="$key2" envsubst '${AZURE_TTS_KEY} ${AZURE_LOCATION}' <./Caddyfile.template >/etc/caddy/Caddyfile
 
 	local NL=$'\n'
 

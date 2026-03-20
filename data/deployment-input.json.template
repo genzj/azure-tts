@@ -3,13 +3,13 @@
   "contentVersion": "1.0.0.0",
   "parameters": {
     "name": {
-      "value": "audio-book-2"
+      "value": "${AZURE_TTS_RESOURCE_NAME}"
     },
     "location": {
-      "value": "westus2"
+      "value": "${AZURE_LOCATION}"
     },
     "resourceGroupId": {
-      "value": "/subscriptions/<SUBSCRIPTION_ID>/resourceGroups/TTS"
+      "value": "/subscriptions/${AZURE_SUBSCRIPTION_ID}/resourceGroups/TTS"
     },
     "resourceGroupName": {
       "value": "TTS"
@@ -97,7 +97,7 @@
       }
     },
     "uniqueId": {
-      "value": "32301003-cc53-43df-b721-016eeac58750"
+      "value": "${AZURE_UNIQUE_ID}"
     }
   }
 }

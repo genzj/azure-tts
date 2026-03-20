@@ -23,7 +23,7 @@
         handle /tts {
             handle @post {
                 # Proxy to Azure TTS
-                reverse_proxy https://westus2.tts.speech.microsoft.com {
+                reverse_proxy https://${AZURE_LOCATION}.tts.speech.microsoft.com {
                     # 1. Map the incoming path to the Azure endpoint
                     rewrite /cognitiveservices/v1
 
