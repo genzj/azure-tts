@@ -13,7 +13,7 @@ After each recreation cycle the proxy picks up the new key automatically. From t
 
 ### How It Works
 
-```
+```text
 Client --> POST /tts --> TTS Proxy (Caddy :80) --> Azure TTS API
                           │
                           ├─ Authenticates client via X-Proxy-Token header
@@ -25,14 +25,76 @@ Client --> POST /tts --> TTS Proxy (Caddy :80) --> Azure TTS API
 2. Caddy starts immediately after and serves as the proxy until the container is restarted for the next recreation cycle.
 3. Clients authenticate with a static `X-Proxy-Token` header and POST SSML to `/tts`. The proxy handles all Azure-specific headers and credential injection.
 
-## Prerequisites
+## Quick Start
 
-- Azure service principal with appropriate permissions (see [Create an Azure Service Principal](#create-an-azure-service-principal))
-- Azure CLI installed and configured (local run only, not needed for running with the Docker image)
+### Create an Azure Service Principal
 
-The resource group `TTS` and the template spec `audio-book-tts` are created automatically on first run if they do not already exist. An existing template spec is also updated when the bundled ARM template has changed.
+You need a service principal so the script can log in to Azure and manage TTS resources. All built-in roles used below are available on every Azure account tier, including free.
 
-## Quick Start (Docker)
+1. Log into the Azure Cloud Shell: <https://portal.azure.com/#cloudshell/> and execute following commands.
+
+2. Find and export your subscription ID:
+
+   ```bash
+   az account list --query "[].{Name:name, Id:id}" -o table
+
+   export SUBSCRIPTION_ID="<copy your subscription ID from the table above>"
+   ```
+
+3. Create the resource group (so role assignments can be scoped to it):
+
+   ```bash
+   az group create --name TTS --location westus2
+   ```
+
+4. Create the service principal:
+
+   ```bash
+   # ⚠ The output contains appId, password, and tenant — save them
+   #   somewhere secure immediately. The password is shown only once
+   #   and cannot be retrieved later.
+   az ad sp create-for-rbac --name "tts-recreator"
+   ```
+
+   Export the `appId` from the output for the next step:
+
+   ```bash
+   export SP_APPID="<copy appId from the output above>"
+   ```
+
+5. Assign the recommended least-privilege roles:
+
+   ```bash
+   # Manage TTS resources and purge soft-deleted accounts (subscription
+   # scope is required because purge operates on a subscription-level
+   # resource path outside any single resource group)
+   az role assignment create --assignee "$SP_APPID" \
+     --role "Cognitive Services Contributor" \
+     --scope "/subscriptions/$SUBSCRIPTION_ID"
+
+   az role assignment create --assignee "$SP_APPID" \
+     --role "Template Spec Contributor" \
+     --scope "/subscriptions/$SUBSCRIPTION_ID/resourceGroups/TTS"
+
+   az role assignment create --assignee "$SP_APPID" \
+     --role "Reader" \
+     --scope "/subscriptions/$SUBSCRIPTION_ID"
+   ```
+
+   > If you skipped step 2 and want the container to create the resource group automatically on first run, replace `Reader` with `Contributor` at the subscription scope. You can downgrade it to `Reader` afterwards.
+
+6. Copy `appId`, `password`, and `tenant` from the step 3 output into your `.env` as `AZURE_APPID`, `AZURE_PASSWORD`, and `AZURE_TENANT`.
+
+> **Quick alternative:** If you just want to get started and will tighten permissions later, a single command does everything:
+>
+> ```bash
+> az ad sp create-for-rbac --name "tts-recreator" \
+>   --role Owner --scopes "/subscriptions/$SUBSCRIPTION_ID"
+> ```
+>
+> This grants full control over the subscription — not recommended for production use. See the [Azure CLI documentation](https://learn.microsoft.com/en-us/cli/azure/azure-cli-sp-tutorial-1) for details.
+
+### Start the service with Docker Compose
 
 1. Download [docker-compose.yml](docker-compose.yml) and [.env.sample](.env.sample).
 
@@ -40,7 +102,7 @@ The resource group `TTS` and the template spec `audio-book-tts` are created auto
 
    ```bash
    cp .env.sample .env
-   # Edit .env — fill in the 4 required values (see below)
+   # Edit .env — fill in the 4 required values (see below or the .env.sample file)
    ```
 
 3. Run with Docker Compose:
@@ -52,7 +114,9 @@ The resource group `TTS` and the template spec `audio-book-tts` are created auto
    Or run directly:
 
    ```bash
-   docker run --rm --env-file .env -p 80:80 ghcr.io/genzj/azure-tts:latest
+      # ⚠ Listening on localhost only. In production, run behind a reverse proxy
+      #   with HTTPS to protect the security token.
+      docker run --rm --env-file .env -p 127.0.0.1:9080:80 ghcr.io/genzj/azure-tts:latest
    ```
 
    The container will automatically detect your subscription ID, generate the deployment parameters, create the Azure resources, and start the proxy.
@@ -60,7 +124,7 @@ The resource group `TTS` and the template spec `audio-book-tts` are created auto
 4. Send a TTS request through the proxy:
 
    ```bash
-   curl -X POST http://localhost/tts \
+   curl -X POST http://localhost:9080/tts \
      -H "X-Proxy-Token: <your-TTS_PROXY_ACCESS_TOKEN>" \
      -H "X-Microsoft-OutputFormat: audio-48khz-192kbitrate-mono-mp3" \
      -d "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'>\
@@ -99,71 +163,6 @@ Template resolution order:
 
 1. `/input/deployment-input.json.template` (user-mounted custom template)
 2. `/app/data/deployment-input.json.template` (bundled default)
-
-### Create an Azure Service Principal
-
-You need a service principal so the container can log in to Azure and manage TTS resources. All built-in roles used below are available on every Azure account tier, including free.
-
-1. Find and export your subscription ID:
-
-   ```bash
-   az account list --query "[].{Name:name, Id:id}" -o table
-
-   export SUBSCRIPTION_ID="<copy your subscription ID from the table above>"
-   ```
-
-2. Create the resource group (so role assignments can be scoped to it):
-
-   ```bash
-   az group create --name TTS --location westus2
-   ```
-
-3. Create the service principal:
-
-   ```bash
-   # ⚠ The output contains appId, password, and tenant — save them
-   #   somewhere secure immediately. The password is shown only once
-   #   and cannot be retrieved later.
-   az ad sp create-for-rbac --name "tts-recreator"
-   ```
-
-   Export the `appId` from the output for the next step:
-
-   ```bash
-   export SP_APPID="<copy appId from the output above>"
-   ```
-
-4. Assign the recommended least-privilege roles:
-
-   ```bash
-   # Manage TTS resources and purge soft-deleted accounts (subscription
-   # scope is required because purge operates on a subscription-level
-   # resource path outside any single resource group)
-   az role assignment create --assignee "$SP_APPID" \
-     --role "Cognitive Services Contributor" \
-     --scope "/subscriptions/$SUBSCRIPTION_ID"
-
-   az role assignment create --assignee "$SP_APPID" \
-     --role "Template Spec Contributor" \
-     --scope "/subscriptions/$SUBSCRIPTION_ID/resourceGroups/TTS"
-
-   az role assignment create --assignee "$SP_APPID" \
-     --role "Reader" \
-     --scope "/subscriptions/$SUBSCRIPTION_ID"
-   ```
-
-   > If you skipped step 2 and want the container to create the resource group automatically on first run, replace `Reader` with `Contributor` at the subscription scope. You can downgrade it to `Reader` afterwards.
-
-5. Copy `appId`, `password`, and `tenant` from the step 3 output into your `.env` as `AZURE_APPID`, `AZURE_PASSWORD`, and `AZURE_TENANT`.
-
-> **Quick alternative:** If you just want to get started and will tighten permissions later, a single command does everything:
->
-> ```bash
-> az ad sp create-for-rbac --name "tts-recreator" \
->   --role Owner --scopes "/subscriptions/$SUBSCRIPTION_ID"
-> ```
->
-> This grants full control over the subscription — not recommended for production use. See the [Azure CLI documentation](https://learn.microsoft.com/en-us/cli/azure/azure-cli-sp-tutorial-1) for details.
 
 ### Finding Your Tenant ID
 
@@ -293,29 +292,29 @@ Set `TTS_DEBUG` in `.env` to control debug output:
 
 ## Troubleshooting
 
-**Login Failures**
+### Login Failures
 
 - Verify service principal credentials in `.env`.
 - Ensure the service principal has not expired.
 - Check the tenant ID is correct.
 
-**Resource Not Found**
+### Resource Not Found
 
 - Check your service principal has the required permissions to create resource groups and template specs.
 - If auto-provisioning fails, you can manually create the resource group and upload the template spec (see error codes 2 and 3).
 
-**Deployment Failures**
+### Deployment Failures
 
 - Check the environment variables (`AZURE_LOCATION`, `AZURE_TTS_RESOURCE_NAME`) or your custom `deployment-input.json.template` if mounted.
 - Ensure template spec version `v1` is accessible.
 - Check resource quotas in your subscription.
 
-**Proxy Not Starting**
+### Proxy Not Starting
 
 - `TTS_PROXY_ACCESS_TOKEN` must be at least 12 characters. Generate one with: `openssl rand -base64 32 | tr -d '/+=' | cut -c1-32`
 - Check Caddy logs in the container output for configuration errors.
 
-**Clients Getting Connection Aborted**
+### Clients Getting Connection Aborted
 
 - Ensure the `X-Proxy-Token` header value matches `TTS_PROXY_ACCESS_TOKEN` exactly.
 
