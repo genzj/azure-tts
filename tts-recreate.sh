@@ -187,13 +187,13 @@ show_keys() {
 	if [[ -z "$key1" || "$key1" == "null" || -z "$key2" || "$key2" == "null" ]]; then
 		echo "ERROR: Failed to retrieve valid API keys from Azure."
 		echo "  key1=${key1:-<empty>}  key2=${key2:-<empty>}"
-		echo "Refusing to write Caddy config with invalid credentials."
+		echo "Refusing to write nginx config with invalid credentials."
 		exit 4
 	fi
 
-	mkdir -p /etc/caddy
+	mkdir -p /etc/nginx
 	# shellcheck disable=SC2016
-	AZURE_TTS_KEY="$key2" envsubst '${AZURE_TTS_KEY} ${AZURE_LOCATION}' <./Caddyfile.template >/etc/caddy/Caddyfile
+	AZURE_TTS_KEY="$key2" envsubst '${AZURE_TTS_KEY} ${AZURE_LOCATION} ${TTS_PROXY_ACCESS_TOKEN}' <./nginx.conf.template >/etc/nginx/nginx.conf
 
 	local NL=$'\n'
 
@@ -217,7 +217,7 @@ show_keys() {
 	fi
 }
 
-start_caddy() {
+start_nginx() {
 	# Token Length Verification
 	TOKEN_LENGTH=${#TTS_PROXY_ACCESS_TOKEN}
 
@@ -233,7 +233,7 @@ start_caddy() {
 		exit 1
 	fi
 
-	exec caddy "run" "--config" "/etc/caddy/Caddyfile" "--adapter" "caddyfile"
+	exec nginx -g "daemon off;"
 }
 
 if [[ ${TTS_DEBUG:-0} -gt 2 ]]; then
@@ -246,4 +246,4 @@ else
 fi
 
 show_keys
-start_caddy
+start_nginx

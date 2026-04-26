@@ -1,0 +1,79 @@
+worker_processes auto;
+pid /tmp/nginx.pid;
+error_log /dev/stderr;
+
+events {
+    worker_connections 1024;
+}
+
+http {
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+    access_log /dev/stdout;
+
+    types_hash_max_size 2048;
+    types_hash_bucket_size 128;
+
+    # 20 requests per 60 seconds = 1 request every 3 seconds
+    limit_req_zone $binary_remote_addr zone=azure_tts_limit:10m rate=20r/m;
+
+    server {
+        listen 80;
+        server_name _;
+
+        # Logging configuration
+        access_log /dev/stdout;
+        error_log /dev/stderr;
+
+        # Logic for X-Microsoft-OutputFormat fallback
+        set $tts_output_format "audio-16khz-32kbitrate-mono-mp3";
+        if ($http_x_microsoft_outputformat ~ ".+") {
+            set $tts_output_format $http_x_microsoft_outputformat;
+        }
+
+        # Health check endpoint
+        location /healthz {
+            access_log off;
+            return 200 "OK";
+        }
+
+        # Main TTS logic
+        location /tts {
+            # 2. Authentication Check (X-Proxy-Token)
+            if ($http_x_proxy_token != "${TTS_PROXY_ACCESS_TOKEN}") {
+                return 444; # Equivalent to Caddy's 'abort'
+            }
+
+            # 3. Method Check
+            if ($request_method != POST) {
+                return 405 "Method Not Allowed";
+            }
+
+            # 4. Apply Rate Limiting
+            # 'burst=5' allows a small buffer of requests to queue
+            # 'delay=5' (or omitted) forces the "sleep/wait" behavior you requested
+            limit_req zone=azure_tts_limit burst=5;
+
+            # 5. Proxy to Azure
+            proxy_pass https://${AZURE_LOCATION}.tts.speech.microsoft.com/cognitiveservices/v1;
+
+            # Inject Azure-required headers
+            proxy_set_header Ocp-Apim-Subscription-Key "${AZURE_TTS_KEY}";
+            proxy_set_header Content-Type "application/ssml+xml";
+            proxy_set_header X-Microsoft-OutputFormat $tts_output_format;
+            proxy_set_header User-Agent "generate-tts-proxy";
+
+            # Security: Force the Host header to match the upstream endpoint
+            proxy_set_header Host ${AZURE_LOCATION}.tts.speech.microsoft.com;
+
+            # SSL Snippets (Required for proxying to HTTPS)
+            proxy_ssl_server_name on;
+            proxy_ssl_protocols TLSv1.2 TLSv1.3;
+        }
+
+        # Fallback for any other path
+        location / {
+            return 404;
+        }
+    }
+}
