@@ -7,23 +7,24 @@ Automates the recreation of Azure Text-to-Speech (TTS) free-tier services to byp
 Azure's free TTS service (F0 SKU) has usage quotas that, once exceeded, prevent further text-to-speech operations. This project solves the problem by combining two components:
 
 1. **Service Recreation** — a script that automatically deletes, purges, and recreates Azure TTS service instances, then retrieves fresh API keys.
-2. **TTS Proxy** — a [Caddy](https://caddyserver.com/)-based reverse proxy that transparently injects the latest Azure credentials into every request, so clients only need a single, stable proxy endpoint and a static access token.
+2. **TTS Proxy** — an nginx-based reverse proxy that transparently injects the latest Azure credentials into every request, so clients only need a single, stable proxy endpoint and a static access token.
 
-After each recreation cycle the proxy picks up the new key automatically. From the client's perspective, the Azure TTS API is always available with virtually no monthly quota limitation.
+After each recreation cycle the proxy picks up the new key automatically. From the client's perspective, the proxy endpoint stays stable, but Azure still enforces its own upstream quotas and rate limits. The nginx config also applies a small local request throttle to smooth bursts and protect the service.
 
 ### How It Works
 
 ```text
-Client --> POST /tts --> TTS Proxy (Caddy :80) --> Azure TTS API
+Client --> POST /tts --> TTS Proxy (nginx :80) --> Azure TTS API
                           │
                           ├─ Authenticates client via X-Proxy-Token header
                           ├─ Injects current Azure subscription key
                           └─ Forwards SSML payload to Azure
 ```
 
-1. The recreation script (`tts-recreate.sh`) logs in with an Azure service principal, tears down the old TTS resource, purges it, deploys a fresh one from an ARM template spec, and writes the new key into the Caddy configuration.
-2. Caddy starts immediately after and serves as the proxy until the container is restarted for the next recreation cycle.
+1. The recreation script (`tts-recreate.sh`) logs in with an Azure service principal, tears down the old TTS resource, purges it, deploys a fresh one from an ARM template spec, and writes the new key into the nginx configuration.
+2. nginx starts immediately after and serves as the proxy until the container is restarted for the next recreation cycle.
 3. Clients authenticate with a static `X-Proxy-Token` header and POST SSML to `/tts`. The proxy handles all Azure-specific headers and credential injection.
+4. nginx enforces a local request limit of 20 requests per minute with a small burst allowance. Azure's upstream TTS service still applies its own service-side quotas and [rate limits](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/speech-services-quotas-and-limits#text-to-speech-quotas-and-limits-per-resource).
 
 ## Quick Start
 
@@ -146,7 +147,7 @@ Configure these in your `.env` file:
 | `AZURE_TENANT`            | Yes      |                   | Azure AD tenant ID (see [Finding Your Tenant ID](#finding-your-tenant-id))                                                               |
 | `TTS_PROXY_ACCESS_TOKEN`  | Yes      |                   | Static token clients use to authenticate with the proxy (min 12 characters)                                                              |
 | `AZURE_SUBSCRIPTION_ID`   | No       | _(auto-detected)_ | Azure subscription ID. Auto-detected after login; must be set explicitly when the service principal has access to multiple subscriptions |
-| `AZURE_LOCATION`          | No       | `westus2`         | Azure region for the TTS resource and Caddy upstream URL                                                                                 |
+| `AZURE_LOCATION`          | No       | `westus2`         | Azure region for the TTS resource and nginx upstream URL                                                                                 |
 | `AZURE_TTS_RESOURCE_NAME` | No       | `audio-book`      | Name of the Cognitive Services resource                                                                                                  |
 | `TELEGRAM_BOT_TOKEN`      | No       |                   | Telegram bot token for key-change notifications                                                                                          |
 | `TELEGRAM_CHAT_ID`        | No       |                   | Telegram chat ID for notifications                                                                                                       |
@@ -205,6 +206,8 @@ The proxy itself may return the following:
 | _(connection aborted)_   | Missing or invalid `X-Proxy-Token` |
 | `404 Not Found`          | Path is not `/tts`                 |
 | `405 Method Not Allowed` | Non-POST method on `/tts`          |
+
+nginx also applies a local request throttle of 20 requests per minute per client IP, with a small burst allowance. That guard rail protects the proxy and smooths traffic, but Azure's own upstream TTS service still enforces the real service-side quotas and rate limits.
 
 When the request passes proxy validation, it is forwarded to Azure TTS. The Azure response (status codes, headers, and body — an audio stream in the format specified by `X-Microsoft-OutputFormat`, or `audio-16khz-32kbitrate-mono-mp3` by default) is returned to the client transparently.
 
@@ -312,7 +315,7 @@ Set `TTS_DEBUG` in `.env` to control debug output:
 ### Proxy Not Starting
 
 - `TTS_PROXY_ACCESS_TOKEN` must be at least 12 characters. Generate one with: `openssl rand -base64 32 | tr -d '/+=' | cut -c1-32`
-- Check Caddy logs in the container output for configuration errors.
+- Check nginx logs in the container output for configuration errors.
 
 ### Clients Getting Connection Aborted
 
@@ -322,7 +325,7 @@ Set `TTS_DEBUG` in `.env` to control debug output:
 
 - Never commit `.env` files containing credentials.
 - Use a strong, random `TTS_PROXY_ACCESS_TOKEN` (at least 12 characters, 32+ recommended).
-- Place the proxy behind an API gateway or load balancer that terminates TLS — Caddy listens on plain HTTP by design.
+- Place the proxy behind an API gateway or load balancer that terminates TLS — nginx listens on plain HTTP by design.
 - Regularly rotate service principal secrets.
 - Follow the principle of least privilege for Azure permissions.
 
@@ -342,11 +345,11 @@ This project is licensed under the MIT License — see the [LICENSE](LICENSE) fi
 
 ### Separate recreator and proxy into independent services
 
-Currently the recreation script and the Caddy proxy run sequentially in a single container — the proxy is unavailable during recreation and cannot scale independently.
+Currently the recreation script and the nginx proxy run sequentially in a single container — the proxy is unavailable during recreation and cannot scale independently.
 
 - Split into two containers: a short-lived recreator job and a long-running proxy service.
-- After recreating the Azure resource, the recreator pushes the new key to Caddy via its [admin API](https://caddyserver.com/docs/api) (`POST /load`) instead of writing a static config file.
-- Enable the Caddy admin API listener (currently unused) and secure it for internal-only access.
+- After recreating the Azure resource, the recreator writes a new nginx config and reloads nginx instead of relying on a static startup-only config.
+- Keep any reload or orchestration endpoint internal-only if you expose one.
 - Allow horizontal scaling of the proxy behind a load balancer while a single recreator instance manages the lifecycle.
 - Achieve zero-downtime credential rotation — clients experience no interruption during recreation.
 
@@ -358,6 +361,6 @@ The shipped `docker-compose.yml` has the port mapping commented out and uses `re
 
 ## Acknowledgments
 
-- [Caddy](https://caddyserver.com/) for the lightweight, config-driven reverse proxy
+- nginx for the lightweight, config-driven reverse proxy
 - Azure CLI team for comprehensive tooling
 - Azure Cognitive Services documentation
