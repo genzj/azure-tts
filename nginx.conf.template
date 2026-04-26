@@ -14,8 +14,8 @@ http {
     types_hash_max_size 2048;
     types_hash_bucket_size 128;
 
-    # 20 requests per 60 seconds = 1 request every 3 seconds
-    limit_req_zone $binary_remote_addr zone=azure_tts_limit:10m rate=20r/m;
+    # 20 requests per 60 seconds = 1 request every 3 seconds and adding a little buffer
+    limit_req_zone "azure-global" zone=azure_tts_limit:16m rate=17r/m;
 
     server {
         listen 80;
@@ -51,8 +51,7 @@ http {
 
             # 4. Apply Rate Limiting
             # 'burst=5' allows a small buffer of requests to queue
-            # 'delay=5' (or omitted) forces the "sleep/wait" behavior you requested
-            limit_req zone=azure_tts_limit burst=5;
+            limit_req zone=azure_tts_limit burst=8;
 
             # 5. Proxy to Azure
             proxy_pass https://${AZURE_LOCATION}.tts.speech.microsoft.com/cognitiveservices/v1;
