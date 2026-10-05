@@ -45,6 +45,12 @@ Set `TTS_DEBUG=3` in `.env`. The script skips delete/purge/create entirely but s
 
 The container is single-shot by design: the proxy is down during recreation, and a new key requires a container restart (a known limitation tracked in the README TODO).
 
+### Optional scheduled restart
+
+`docker-compose.yml` defines a `scheduled-restart` sidecar (compose profile of the same name, off by default) built only from the stock `docker:cli` image: busybox `crond` + `shuf` + the mounted Docker socket restart every container labelled `azure-tts.scheduled-restart=true` at `RESTART_CRON` plus a random `0..RESTART_JITTER_SECONDS` delay. The logic is inline in the compose file on purpose — Quick Start users download only that file. `docker-compose-dev.yml` reuses it via `extends`.
+
+When editing that inline command: `$$` is compose's escape for a literal `$`; `$$VAR` expands when the crontab is written (container start), `\$$(...)` stays literal and runs at each cron tick. The sidecar's `TZ` comes from `RESTART_TZ`, not `TZ`, because `.env` is also the `env_file` of `azure-tts`; `docker:cli` has no tzdata, so only POSIX TZ strings work unless host zoneinfo is mounted. Use `crond -d N` (log to stderr), not `-l N` (busybox logs to syslog, which doesn't exist in the container). Verify rendering with `docker compose -f docker-compose-dev.yml --profile scheduled-restart config`.
+
 ### Hardcoded Azure names
 
 Resource group `TTS`, template spec `audio-book-tts` version `v1`. These are string literals repeated across both scripts — not env vars. Only the Speech resource name (`AZURE_TTS_RESOURCE_NAME`, default `audio-book`) and region (`AZURE_LOCATION`, default `westus2`) are configurable.

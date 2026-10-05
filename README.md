@@ -153,6 +153,10 @@ Configure these in your `.env` file:
 | `TELEGRAM_CHAT_ID`        | No       |                   | Telegram chat ID for notifications                                                                                                       |
 | `NOTE_MANAGE_URL`         | No       |                   | Manage URL of a [pastebin-worker](https://github.com/SharzyL/pastebin-worker) note for key publishing                                    |
 | `TTS_DEBUG`               | No       | `0`               | Debug level: 0 = off, 1 = print env, 2 = print env + trace, 3 = dry run (see [Debugging](#debugging))                                    |
+| `COMPOSE_PROFILES`        | No       |                   | Set to `scheduled-restart` to enable [Scheduled Restarts](#scheduled-restarts)                                                           |
+| `RESTART_CRON`            | No       | `0 3 */2 * *`     | Cron expression (in `RESTART_TZ`) for scheduled restarts                                                                                 |
+| `RESTART_TZ`              | No       | `UTC`             | Timezone for `RESTART_CRON` (see [Scheduled Restarts](#scheduled-restarts))                                                              |
+| `RESTART_JITTER_SECONDS`  | No       | `7200`            | Max random delay (seconds) added after each scheduled restart time                                                                       |
 
 ### Advanced: Custom Deployment Parameters
 
@@ -164,6 +168,22 @@ Template resolution order:
 
 1. `/input/deployment-input.json.template` (user-mounted custom template)
 2. `/app/data/deployment-input.json.template` (bundled default)
+
+### Scheduled Restarts
+
+The container recreates the Azure resource only on startup. To repeat this on a cadence, enable the optional `scheduled-restart` sidecar in `docker-compose.yml` by adding `COMPOSE_PROFILES=scheduled-restart` to `.env` (or passing `--profile scheduled-restart` to `docker compose up`).
+
+The sidecar uses the stock `docker:cli` image: busybox `crond` fires at `RESTART_CRON`, waits a random `0..RESTART_JITTER_SECONDS` seconds, then runs `docker restart` on every container labelled `azure-tts.scheduled-restart=true`. A container that has exited (e.g. a failed recreation) is started again on the next tick. Follow it with `docker compose logs -f scheduled-restart`.
+
+- The schedule is evaluated in `RESTART_TZ` (default **UTC**). The `docker:cli` image ships no timezone database, so:
+  - POSIX TZ strings work out of the box, e.g. `RESTART_TZ="PST8PDT,M3.2.0,M11.1.0"` or `RESTART_TZ="CET-1CEST,M3.5.0,M10.5.0/3"`.
+  - Zone names such as `RESTART_TZ="Asia/Shanghai"` require uncommenting the `/usr/share/zoneinfo` volume in `docker-compose.yml`.
+  - An unrecognised zone name **silently falls back to UTC** — check the timestamps in `docker compose logs scheduled-restart`.
+- Jitter is a delay *after* the cron time. For a window centred on a time, schedule half the jitter earlier.
+- `*/2` in the day-of-month field fires on odd days, so in 31-day months restarts happen on both the 31st and the 1st.
+- The proxy is unavailable while recreation runs after each restart.
+- ⚠ The sidecar mounts `/var/run/docker.sock`, which grants root-equivalent access to the Docker host.
+- With plain `docker run`, add `--label azure-tts.scheduled-restart=true` to the TTS container and run the sidecar with the same command as in `docker-compose.yml`.
 
 ### Finding Your Tenant ID
 
@@ -357,7 +377,7 @@ Currently the recreation script and the nginx proxy run sequentially in a single
 
 The shipped `docker-compose.yml` has the port mapping commented out and uses `restart: "no"`.
 
-- Provide a production-ready compose example with port exposure, a restart policy (e.g. `unless-stopped`), and optional scheduling (cron or external trigger) for periodic recreation.
+- Provide a production-ready compose example with port exposure and a restart policy (e.g. `unless-stopped`).
 
 ## Acknowledgments
 

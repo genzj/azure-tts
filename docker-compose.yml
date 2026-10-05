@@ -3,8 +3,31 @@ services:
     image: ghcr.io/genzj/azure-tts:latest
     env_file:
       - .env
+    labels:
+      - azure-tts.scheduled-restart=true
     # volumes:
     #   - .:/input  # Only needed to mount a custom deployment-input.json.template
     restart: "no"
     # ports:
     #   - 80
+
+  # Optional: periodically restart azure-tts (which recreates the Azure
+  # resource) with a random delay. Enable with COMPOSE_PROFILES=scheduled-restart.
+  scheduled-restart:
+    image: docker:cli
+    profiles: ["scheduled-restart"]
+    restart: unless-stopped
+    volumes:
+      # ⚠ Grants root-equivalent access to the Docker host
+      - /var/run/docker.sock:/var/run/docker.sock
+      # - /usr/share/zoneinfo:/usr/share/zoneinfo:ro  # Only needed for zone names in RESTART_TZ
+    environment:
+      TZ: ${RESTART_TZ:-UTC}
+      RESTART_CRON: ${RESTART_CRON:-0 3 */2 * *}
+      RESTART_JITTER_SECONDS: ${RESTART_JITTER_SECONDS:-7200}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "$$RESTART_CRON (d=\$$(shuf -i 0-$$RESTART_JITTER_SECONDS -n 1); echo \"restart in \$${d}s\"; sleep \$$d; docker restart \$$(docker ps -aq --filter label=azure-tts.scheduled-restart=true)) >/proc/1/fd/1 2>&1" | crontab -
+        crontab -l
+        exec crond -f -d 8

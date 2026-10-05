@@ -3,8 +3,15 @@ services:
     build: .
     env_file:
       - .env
+    labels:
+      - azure-tts.scheduled-restart=true
     # volumes:
     #   - .:/input  # Only needed to mount a custom deployment-input.json.template
     restart: "no"
     ports:
       - "9980:80"
+
+  scheduled-restart:
+    extends:
+      file: docker-compose.yml
+      service: scheduled-restart
